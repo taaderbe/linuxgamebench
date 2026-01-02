@@ -46,6 +46,13 @@ sudo apt install mangohud pipx
 pipx install git+https://github.com/taaderbe/linuxgamebench.git
 ```
 
+### Update to Latest Version
+
+```bash
+pipx uninstall linux-game-benchmark
+pipx install git+https://github.com/taaderbe/linuxgamebench.git
+```
+
 ### Install from Source (Development)
 
 ```bash
@@ -63,6 +70,11 @@ pip install -e .
 ```bash
 lgb check
 ```
+
+This will:
+- Verify MangoHud, Steam and other tools are installed
+- Automatically enable MangoHud globally (asks for confirmation)
+- After enabling, log out and back in for changes to take effect
 
 ### 2. List Steam Games
 
@@ -140,15 +152,13 @@ xdg-open ~/benchmark_results/index.html
 
 ## MangoHud Setup
 
-Add to Steam launch options:
-```
-MANGOHUD=1 %command%
-```
+MangoHud is automatically configured when you run `lgb check`. Just log out and back in after.
 
-Or enable globally:
+**Manual setup (if needed):**
 ```bash
 mkdir -p ~/.config/environment.d
 echo "MANGOHUD=1" >> ~/.config/environment.d/mangohud.conf
+# Then log out and back in
 ```
 
 ## Upload Results
