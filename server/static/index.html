@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Linux Game Benchmark</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        :root {
+            --bg: #1a1a2e;
+            --card: #25274d;
+            --card-alt: #2d2f5a;
+            --card-hover: #2d2f5a;
+            --text: #eaeaea;
+            --text-muted: #a0a0a0;
+            --green: #00d26a;
+            --yellow: #ffc107;
+            --red: #ff5252;
+            --blue: #4fc3f7;
+            --purple: #b388ff;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: linear-gradient(135deg, var(--bg) 0%, #16213e 100%);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 30px 20px;
+        }
+        .container { max-width: 1400px; margin: 0 auto; }
+
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            background: linear-gradient(90deg, var(--blue), var(--purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        header .subtitle { color: var(--text-muted); font-size: 1.1rem; }
+
+        .filter-bar {
+            background: var(--card);
+            border-radius: 16px;
+            padding: 20px;
+            margin-top: 30px;
+            margin-bottom: 25px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: flex-end;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+        }
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .filter-group label {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .filter-group select {
+            background: var(--bg);
+            color: var(--text);
+            border: 1px solid rgba(255,255,255,0.2);
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            min-width: 130px;
+        }
+        .filter-group select:hover { border-color: var(--blue); }
+        .reset-btn {
+            background: transparent;
+            color: var(--text-muted);
+            border: 1px solid var(--text-muted);
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            margin-left: auto;
+        }
+        .reset-btn:hover { color: var(--text); border-color: var(--text); }
+
+        .stats-bar {
+            display: flex;
+            gap: 30px;
+            margin-bottom: 25px;
+            flex-wrap: wrap;
+        }
+        .stat-box {
+            background: var(--card);
+            padding: 15px 25px;
+            border-radius: 12px;
+            text-align: center;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+        }
+        .stat-box .number {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--blue);
+        }
+        .stat-box .label {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+        }
+
+        .table-wrapper {
+            overflow-x: auto;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+        }
+
+        .benchmark-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--card);
+            border-radius: 12px;
+            overflow: hidden;
+            min-width: 800px;
+        }
+        .benchmark-table th {
+            background: rgba(0,0,0,0.3);
+            padding: 12px 15px;
+            text-align: left;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            cursor: pointer;
+            user-select: none;
+        }
+        .benchmark-table th:hover {
+            background: rgba(0,0,0,0.4);
+        }
+        .benchmark-table td {
+            padding: 12px 15px;
+            border-top: 1px solid rgba(255,255,255,0.05);
+        }
+        .benchmark-table tr.data-row:hover {
+            background: var(--card-hover);
+        }
+        .benchmark-table tr.data-row {
+            cursor: pointer;
+        }
+
+        .fps { color: var(--green); font-weight: 700; font-size: 1.1rem; }
+        .fps-low { color: var(--yellow); }
+        .fps-verylow { color: var(--red); }
+
+        .stutter-excellent, .stutter-good { color: var(--green); }
+        .stutter-moderate { color: var(--yellow); }
+        .stutter-poor { color: var(--red); }
+        .stutter-unknown { color: var(--text-muted); }
+
+        .detail-row {
+            display: none;
+        }
+        .detail-row.show {
+            display: table-row;
+        }
+        .detail-row td {
+            padding: 0;
+            background: rgba(0,0,0,0.2);
+        }
+        .detail-content {
+            padding: 20px;
+        }
+        .detail-header h3 {
+            color: var(--blue);
+            margin-bottom: 15px;
+        }
+        .detail-stats {
+            display: flex;
+            gap: 30px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+        .detail-stat {
+            text-align: center;
+            min-width: 100px;
+        }
+        .detail-stat .value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--green);
+        }
+        .detail-stat .label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-muted);
+        }
+        .empty-state h2 {
+            color: var(--text);
+            margin-bottom: 10px;
+        }
+        .empty-state code {
+            background: var(--card);
+            padding: 5px 10px;
+            border-radius: 5px;
+            color: var(--blue);
+        }
+
+        footer {
+            text-align: center;
+            margin-top: 50px;
+            padding-top: 20px;
+            border-top: 1px solid rgba(255,255,255,0.1);
+            color: var(--text-muted);
+        }
+        footer a {
+            color: var(--blue);
+            text-decoration: none;
+        }
+        footer a:hover {
+            text-decoration: underline;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-muted);
+        }
+        .loading::after {
+            content: '...';
+            animation: dots 1.5s infinite;
+        }
+        @keyframes dots {
+            0%, 20% { content: '.'; }
+            40% { content: '..'; }
+            60%, 100% { content: '...'; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Linux Game Benchmark</h1>
+            <p class="subtitle">Community-driven gaming performance database for Linux</p>
+        </header>
+
+        <div class="filter-bar">
+            <div class="filter-group">
+                <label>Game</label>
+                <select id="filter-game" onchange="applyFilters()">
+                    <option value="">All</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Resolution</label>
+                <select id="filter-res" onchange="applyFilters()">
+                    <option value="">All</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>GPU</label>
+                <select id="filter-gpu" onchange="applyFilters()">
+                    <option value="">All</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>OS</label>
+                <select id="filter-os" onchange="applyFilters()">
+                    <option value="">All</option>
+                </select>
+            </div>
+            <button class="reset-btn" onclick="resetFilters()">Reset</button>
+        </div>
+
+        <div class="stats-bar">
+            <div class="stat-box">
+                <div class="number" id="stat-games">0</div>
+                <div class="label">Games</div>
+            </div>
+            <div class="stat-box">
+                <div class="number" id="stat-benchmarks">0</div>
+                <div class="label">Benchmarks</div>
+            </div>
+            <div class="stat-box">
+                <div class="number" id="stat-systems">0</div>
+                <div class="label">Systems</div>
+            </div>
+        </div>
+
+        <div class="table-wrapper">
+            <table class="benchmark-table">
+                <thead>
+                    <tr>
+                        <th onclick="sortTable('game_name')">Game</th>
+                        <th onclick="sortTable('fps_avg')">AVG FPS</th>
+                        <th onclick="sortTable('fps_1low')">1% Low</th>
+                        <th onclick="sortTable('fps_01low')">0.1% Low</th>
+                        <th onclick="sortTable('stutter_rating')">Stutter</th>
+                        <th onclick="sortTable('consistency_rating')">Consistency</th>
+                        <th>Resolution</th>
+                        <th>GPU</th>
+                    </tr>
+                </thead>
+                <tbody id="benchmark-body">
+                    <tr><td colspan="8" class="loading">Loading benchmarks</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <footer>
+            Linux Game Benchmark &bull;
+            <a href="https://github.com/taaderbe/linuxgamebench">GitHub</a>
+        </footer>
+    </div>
+
+    <script>
+        let benchmarks = [];
+        let filteredBenchmarks = [];
+        let sortColumn = 'fps_avg';
+        let sortDirection = 'desc';
+
+        async function loadBenchmarks() {
+            try {
+                const response = await fetch('/api/v1/benchmarks');
+                const data = await response.json();
+                benchmarks = data.benchmarks || [];
+                filteredBenchmarks = [...benchmarks];
+
+                populateFilters();
+                updateStats();
+                renderTable();
+            } catch (error) {
+                document.getElementById('benchmark-body').innerHTML =
+                    '<tr><td colspan="8" class="empty-state"><h2>Error loading benchmarks</h2><p>' + error.message + '</p></td></tr>';
+            }
+        }
+
+        function populateFilters() {
+            const games = [...new Set(benchmarks.map(b => b.game_name))].sort();
+            const resolutions = [...new Set(benchmarks.map(b => b.resolution))].sort();
+            const gpus = [...new Set(benchmarks.map(b => b.gpu))].sort();
+            const oses = [...new Set(benchmarks.map(b => b.os))].sort();
+
+            populateSelect('filter-game', games);
+            populateSelect('filter-res', resolutions);
+            populateSelect('filter-gpu', gpus);
+            populateSelect('filter-os', oses);
+        }
+
+        function populateSelect(id, options) {
+            const select = document.getElementById(id);
+            const currentValue = select.value;
+            select.innerHTML = '<option value="">All</option>';
+            options.forEach(opt => {
+                if (opt) {
+                    const option = document.createElement('option');
+                    option.value = opt;
+                    option.textContent = opt;
+                    select.appendChild(option);
+                }
+            });
+            select.value = currentValue;
+        }
+
+        function applyFilters() {
+            const game = document.getElementById('filter-game').value;
+            const res = document.getElementById('filter-res').value;
+            const gpu = document.getElementById('filter-gpu').value;
+            const os = document.getElementById('filter-os').value;
+
+            filteredBenchmarks = benchmarks.filter(b => {
+                if (game && b.game_name !== game) return false;
+                if (res && b.resolution !== res) return false;
+                if (gpu && b.gpu !== gpu) return false;
+                if (os && b.os !== os) return false;
+                return true;
+            });
+
+            updateStats();
+            renderTable();
+        }
+
+        function resetFilters() {
+            document.getElementById('filter-game').value = '';
+            document.getElementById('filter-res').value = '';
+            document.getElementById('filter-gpu').value = '';
+            document.getElementById('filter-os').value = '';
+            applyFilters();
+        }
+
+        function updateStats() {
+            const games = new Set(filteredBenchmarks.map(b => b.game_name)).size;
+            const systems = new Set(filteredBenchmarks.map(b => b.gpu + '-' + b.cpu)).size;
+
+            document.getElementById('stat-games').textContent = games;
+            document.getElementById('stat-benchmarks').textContent = filteredBenchmarks.length;
+            document.getElementById('stat-systems').textContent = systems;
+        }
+
+        function sortTable(column) {
+            if (sortColumn === column) {
+                sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                sortColumn = column;
+                sortDirection = 'desc';
+            }
+            renderTable();
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById('benchmark-body');
+
+            if (filteredBenchmarks.length === 0) {
+                tbody.innerHTML = `
+                    <tr><td colspan="8">
+                        <div class="empty-state">
+                            <h2>No benchmarks yet</h2>
+                            <p>Be the first to submit a benchmark!</p>
+                            <p>Install lgb and run: <code>lgb record &lt;game&gt;</code></p>
+                        </div>
+                    </td></tr>`;
+                return;
+            }
+
+            const sorted = [...filteredBenchmarks].sort((a, b) => {
+                let aVal = a[sortColumn] || 0;
+                let bVal = b[sortColumn] || 0;
+
+                if (typeof aVal === 'string') {
+                    return sortDirection === 'asc'
+                        ? aVal.localeCompare(bVal)
+                        : bVal.localeCompare(aVal);
+                }
+                return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
+            });
+
+            tbody.innerHTML = sorted.map((b, idx) => {
+                const fpsClass = b.fps_avg >= 60 ? 'fps' : (b.fps_avg >= 30 ? 'fps-low' : 'fps-verylow');
+                const stutterClass = getStutterClass(b.stutter_rating);
+                const consistencyClass = getStutterClass(b.consistency_rating);
+
+                return `
+                    <tr class="data-row" onclick="toggleDetail(${idx})">
+                        <td>${b.game_name}</td>
+                        <td class="${fpsClass}">${Math.round(b.fps_avg || 0)}</td>
+                        <td>${Math.round(b.fps_1low || 0)}</td>
+                        <td>${Math.round(b.fps_01low || 0)}</td>
+                        <td class="${stutterClass}">${b.stutter_rating || '-'}</td>
+                        <td class="${consistencyClass}">${b.consistency_rating || '-'}</td>
+                        <td>${b.resolution || '-'}</td>
+                        <td>${b.gpu || '-'}</td>
+                    </tr>
+                    <tr class="detail-row" id="detail-${idx}">
+                        <td colspan="8">
+                            <div class="detail-content">
+                                <div class="detail-header">
+                                    <h3>${b.game_name} - ${b.resolution}</h3>
+                                </div>
+                                <div class="detail-stats">
+                                    <div class="detail-stat">
+                                        <div class="value">${Math.round(b.fps_avg || 0)}</div>
+                                        <div class="label">AVG FPS</div>
+                                    </div>
+                                    <div class="detail-stat">
+                                        <div class="value" style="color: var(--text)">${Math.round(b.fps_1low || 0)}</div>
+                                        <div class="label">1% Low</div>
+                                    </div>
+                                    <div class="detail-stat">
+                                        <div class="value" style="color: var(--text)">${Math.round(b.fps_01low || 0)}</div>
+                                        <div class="label">0.1% Low</div>
+                                    </div>
+                                    <div class="detail-stat">
+                                        <div class="value" style="color: var(--text)">${b.gpu || '-'}</div>
+                                        <div class="label">GPU</div>
+                                    </div>
+                                    <div class="detail-stat">
+                                        <div class="value" style="color: var(--text)">${b.cpu || '-'}</div>
+                                        <div class="label">CPU</div>
+                                    </div>
+                                    <div class="detail-stat">
+                                        <div class="value" style="color: var(--text)">${b.os || '-'}</div>
+                                        <div class="label">OS</div>
+                                    </div>
+                                    <div class="detail-stat">
+                                        <div class="value" style="color: var(--text)">${b.kernel || '-'}</div>
+                                        <div class="label">Kernel</div>
+                                    </div>
+                                    <div class="detail-stat">
+                                        <div class="value" style="color: var(--text)">${b.steam_name || 'Anonymous'}</div>
+                                        <div class="label">Submitter</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function getStutterClass(rating) {
+            if (!rating) return 'stutter-unknown';
+            const r = rating.toLowerCase();
+            if (r === 'excellent' || r === 'good') return 'stutter-excellent';
+            if (r === 'moderate') return 'stutter-moderate';
+            if (r === 'poor') return 'stutter-poor';
+            return 'stutter-unknown';
+        }
+
+        function toggleDetail(idx) {
+            const row = document.getElementById('detail-' + idx);
+            row.classList.toggle('show');
+        }
+
+        // Load benchmarks on page load
+        loadBenchmarks();
+    </script>
+</body>
+</html>

@@ -197,25 +197,12 @@ async def get_benchmark_detail(benchmark_id: int):
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    """Main page with all benchmarks."""
-    conn = get_db()
-    cursor = conn.cursor()
-
-    # Get all benchmarks grouped by game
-    cursor.execute("""
-        SELECT steam_app_id, game_name, resolution, gpu, cpu, os,
-               fps_avg, fps_min, fps_1low, fps_01low,
-               stutter_rating, consistency_rating, steam_name, created_at
-        FROM benchmarks
-        ORDER BY created_at DESC
-    """)
-
-    rows = cursor.fetchall()
-    conn.close()
-
-    # Generate HTML
-    html = generate_index_html([dict(row) for row in rows])
-    return HTMLResponse(content=html)
+    """Main page - serve static HTML."""
+    static_file = Path("/opt/lgb/static/index.html")
+    if static_file.exists():
+        return HTMLResponse(content=static_file.read_text())
+    else:
+        return HTMLResponse(content="<h1>Frontend not found</h1>", status_code=404)
 
 
 def generate_index_html(benchmarks: List[Dict]) -> str:
