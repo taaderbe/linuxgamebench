@@ -110,10 +110,11 @@ xdg-open ~/benchmark_results/index.html
 | `lgb list` | Show installed Steam games |
 | `lgb scan` | Scan Steam library |
 | `lgb info` | Show system information |
-| `lgb record [game]` | Start benchmark for a game |
-| `lgb record_manual` | Manual mode (start game yourself) |
+| `lgb record_manual` | Manual recording mode (recommended) |
+| `lgb record [game]` | Auto-launch game and record |
 | `lgb analyze [log]` | Analyze MangoHud log |
-| `lgb report` | Regenerate reports |
+| `lgb report` | Regenerate HTML reports |
+| `lgb status` | Show login status |
 | `lgb login` | Login with Steam account |
 | `lgb logout` | Logout from Steam |
 | `lgb upload` | Upload benchmarks to community database |
