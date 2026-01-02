@@ -2,17 +2,32 @@
 
 ## Schnellinstallation
 
-### Methode 1: pip (empfohlen)
+### Methode 1: pipx (empfohlen)
 
 ```bash
-pip install linux-game-benchmark
+# Arch / CachyOS
+sudo pacman -S python-pipx
+pipx install git+https://github.com/taaderbe/linuxgamebench.git
+
+# Ubuntu / Debian
+sudo apt install pipx
+pipx install git+https://github.com/taaderbe/linuxgamebench.git
 ```
 
-### Methode 2: Aus Source
+### Update auf neueste Version
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/linux-game-benchmark
-cd linux-game-benchmark
+pipx uninstall linux-game-benchmark
+pipx install git+https://github.com/taaderbe/linuxgamebench.git
+```
+
+### Methode 2: Aus Source (Development)
+
+```bash
+git clone https://github.com/taaderbe/linuxgamebench
+cd linuxgamebench
+python -m venv .venv
+source .venv/bin/activate
 pip install -e .
 ```
 
@@ -172,8 +187,8 @@ MANGOHUD=1 %command%
 Für Entwickler:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/linux-game-benchmark
-cd linux-game-benchmark
+git clone https://github.com/taaderbe/linuxgamebench
+cd linuxgamebench
 
 # Virtual Environment
 python3 -m venv .venv

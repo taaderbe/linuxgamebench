@@ -337,14 +337,13 @@ class BenchmarkRunner:
             self.launcher.wait_for_exit(timeout=1800.0)  # 30 min max
 
         elif config.benchmark_type == BenchmarkType.TIMED:
-            # Record for fixed duration
+            # Record for fixed duration, then wait for user to close game
             self._log(f"Recording for {config.duration_seconds}s...")
             time.sleep(config.duration_seconds)
 
-            # Terminate game
-            self._log("Stopping game...")
-            self.launcher.terminate()
-            time.sleep(2.0)  # Give time for clean exit
+            # Don't kill the game - let user close it when ready
+            self._log("Recording complete. Close the game when ready...")
+            self.launcher.wait_for_exit(timeout=1800.0)  # 30 min max
 
         result.end_time = datetime.now()
         result.duration_seconds = (result.end_time - result.start_time).total_seconds()

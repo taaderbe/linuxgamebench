@@ -166,14 +166,29 @@ class SteamLibraryScanner:
         return None
 
     def get_game_by_name(self, name: str) -> Optional[dict]:
-        """Get a game by name (case-insensitive partial match)."""
+        """Get a game by name (prefers exact match, then partial match)."""
         if not self._games_cache:
             self.scan()
 
-        name_lower = name.lower()
+        name_lower = name.lower().strip()
+
+        # First: try exact match (case-insensitive)
+        for game in self._games_cache:
+            if game["name"].lower() == name_lower:
+                return game
+
+        # Second: try partial match, but prefer shorter names (more specific)
+        # This prevents "Path of Exile" from matching "Path of Exile 2" first
+        matches = []
         for game in self._games_cache:
             if name_lower in game["name"].lower():
-                return game
+                matches.append(game)
+
+        if matches:
+            # Sort by name length (shorter = more specific match)
+            matches.sort(key=lambda g: len(g["name"]))
+            return matches[0]
+
         return None
 
     def get_proton_versions(self) -> list[dict]:

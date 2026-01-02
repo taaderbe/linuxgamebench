@@ -393,8 +393,8 @@ def benchmark(
         help="Cooldown between runs in seconds",
     ),
     show_hud: bool = typer.Option(
-        False,
-        "--show-hud",
+        True,
+        "--show-hud/--no-hud",
         help="Show MangoHud overlay during benchmark",
     ),
     manual_logging: bool = typer.Option(
