@@ -503,15 +503,26 @@ def benchmark(
     # Check system fingerprint
     current_fp = SystemFingerprint.from_system_info(session.system_info)
 
-    if not storage.check_fingerprint(target_game["name"], current_fp):
+    # Get Steam App ID for storage (canonical identifier)
+    steam_app_id = target_game["app_id"]
+
+    if not storage.check_fingerprint(steam_app_id, current_fp):
         console.print("\n[yellow]System-Konfiguration hat sich geändert![/yellow]")
         console.print("[dim]Alte Benchmark-Daten werden archiviert...[/dim]")
-        archive_path = storage.archive_old_data(target_game["name"])
+        archive_path = storage.archive_old_data(steam_app_id)
         if archive_path:
             console.print(f"[dim]Archiviert nach: {archive_path}[/dim]")
 
     # Save fingerprint and system info
-    storage.save_fingerprint(target_game["name"], current_fp, session.system_info)
+    storage.save_fingerprint(steam_app_id, current_fp, session.system_info)
+
+    # Register game in registry (creates game_info.json)
+    from linux_game_benchmark.games.registry import GameRegistry
+    registry = GameRegistry(base_dir=storage.base_dir)
+    registry.get_or_create(
+        steam_app_id=steam_app_id,
+        display_name=target_game["name"],
+    )
 
     # Get metrics from results and save run
     if session.results:
@@ -526,7 +537,7 @@ def benchmark(
                     frametimes = None
 
                 storage.save_run(
-                    game_name=target_game["name"],
+                    game_id=steam_app_id,
                     resolution=selected_resolution,
                     metrics=result.metrics,
                     log_path=result.log_path,
@@ -534,16 +545,16 @@ def benchmark(
                 )
 
     # Generate multi-resolution report
-    all_resolutions = storage.get_all_resolutions(target_game["name"])
+    all_resolutions = storage.get_all_resolutions(steam_app_id)
     if all_resolutions:
         resolution_data = {}
         for res, runs in all_resolutions.items():
             resolution_data[res] = storage.aggregate_runs(runs)
 
-        report_path = storage.get_report_path(target_game["name"])
+        report_path = storage.get_report_path(steam_app_id)
         generate_multi_resolution_report(
-            game_name=target_game["name"],
-            app_id=target_game["app_id"],
+            game_name=target_game["name"],  # Keep display name for report
+            app_id=steam_app_id,
             system_info=session.system_info,
             resolution_data=resolution_data,
             output_path=report_path,
@@ -633,6 +644,83 @@ def benchmark(
                 console.print(f"  [bold]Recommended:[/bold] {rec_fps} Hz ({rec_rating})")
     else:
         console.print(f"[yellow]{summary.get('error')}[/yellow]")
+
+    # Upload prompt
+    _prompt_upload(
+        steam_app_id=steam_app_id,
+        game_name=target_game["name"],
+        resolution=selected_resolution,
+        system_info=session.system_info,
+        summary=summary,
+    )
+
+
+def _prompt_upload(
+    steam_app_id: int,
+    game_name: str,
+    resolution: str,
+    system_info: dict,
+    summary: dict,
+) -> None:
+    """Ask user if they want to upload the benchmark."""
+    from linux_game_benchmark.api import is_logged_in, upload_benchmark, check_api_status
+
+    console.print("\n" + "─" * 50)
+
+    # Check if logged in
+    if not is_logged_in():
+        console.print("[dim]Hochladen? Bitte zuerst einloggen: lgb login[/dim]")
+        return
+
+    # Ask for upload
+    console.print("[bold]Benchmark zur Community-Datenbank hochladen?[/bold]")
+    try:
+        choice = typer.prompt("Hochladen? [J/n]", default="j").strip().lower()
+    except:
+        return
+
+    if choice not in ["j", "y", "ja", "yes", ""]:
+        console.print("[dim]Nicht hochgeladen.[/dim]")
+        return
+
+    # Check API
+    console.print("[dim]Verbinde mit Server...[/dim]")
+    if not check_api_status():
+        console.print("[red]Server nicht erreichbar. Später mit 'lgb upload' versuchen.[/red]")
+        return
+
+    # Get metrics from summary
+    fps = summary.get("fps", {})
+    metrics = {
+        "fps_avg": fps.get("average", 0),
+        "fps_min": fps.get("minimum", 0),
+        "fps_1low": fps.get("1_percent_low", 0),
+        "fps_01low": fps.get("0.1_percent_low", 0),
+        "stutter_rating": summary.get("stutter", {}).get("stutter_rating"),
+        "consistency_rating": summary.get("frame_pacing", {}).get("consistency_rating"),
+    }
+
+    # Upload
+    result = upload_benchmark(
+        steam_app_id=steam_app_id,
+        game_name=game_name,
+        resolution=resolution,
+        system_info={
+            "gpu": system_info.get("gpu", {}).get("model", "Unknown"),
+            "cpu": system_info.get("cpu", {}).get("model", "Unknown"),
+            "os": system_info.get("os", {}).get("name", "Linux"),
+            "kernel": system_info.get("os", {}).get("kernel"),
+            "ram_gb": int(system_info.get("ram", {}).get("total_gb", 0)),
+        },
+        metrics=metrics,
+    )
+
+    if result.success:
+        console.print(f"[bold green]✓ Hochgeladen![/bold green]")
+        console.print(f"  {result.url}")
+    else:
+        console.print(f"[red]Upload fehlgeschlagen: {result.error}[/red]")
+        console.print("[dim]Später mit 'lgb upload' erneut versuchen.[/dim]")
 
 
 @app.command()
@@ -822,12 +910,21 @@ def record(
     except Exception as e:
         console.print(f"[yellow]Warning: Could not set launch options: {e}[/yellow]")
 
-    # Check/save fingerprint
+    # Check/save fingerprint - use Steam App ID for storage
+    steam_app_id = target_game["app_id"]
     fp = SystemFingerprint.from_system_info(system_info)
-    if not storage.check_fingerprint(target_game["name"], fp):
+    if not storage.check_fingerprint(steam_app_id, fp):
         console.print("[yellow]System-Config geändert - alte Daten werden archiviert[/yellow]")
-        storage.archive_old_data(target_game["name"])
-    storage.save_fingerprint(target_game["name"], fp, system_info)
+        storage.archive_old_data(steam_app_id)
+    storage.save_fingerprint(steam_app_id, fp, system_info)
+
+    # Register game in registry (creates game_info.json)
+    from linux_game_benchmark.games.registry import GameRegistry
+    registry = GameRegistry(base_dir=storage.base_dir)
+    registry.get_or_create(
+        steam_app_id=steam_app_id,
+        display_name=target_game["name"],
+    )
 
     # Track processed logs
     processed_logs = set()
@@ -891,7 +988,7 @@ def record(
 
         # Save run (including frametimes for charting)
         storage.save_run(
-            game_name=target_game["name"],
+            game_id=steam_app_id,
             resolution=resolution,
             metrics=metrics,
             log_path=log_path,
@@ -999,13 +1096,13 @@ def record(
     # Generate report if any recordings were made
     if recording_count > 0:
         console.print(f"\n[bold]Generiere Report...[/bold]")
-        all_res = storage.get_all_resolutions(target_game["name"])
+        all_res = storage.get_all_resolutions(steam_app_id)
         if all_res:
             resolution_data = {res: storage.aggregate_runs(runs) for res, runs in all_res.items()}
-            report_path = storage.get_report_path(target_game["name"])
+            report_path = storage.get_report_path(steam_app_id)
             generate_multi_resolution_report(
-                game_name=target_game["name"],
-                app_id=target_game["app_id"],
+                game_name=target_game["name"],  # Keep display name for report
+                app_id=steam_app_id,
                 system_info=system_info,
                 resolution_data=resolution_data,
                 output_path=report_path,
@@ -1014,6 +1111,223 @@ def record(
             console.print(f"[bold green]Report:[/bold green] {report_path}")
 
     console.print(f"\n[bold]Session beendet - {recording_count} Aufnahme(n) gespeichert[/bold]")
+
+
+@app.command()
+def login() -> None:
+    """
+    Mit Steam-Account einloggen.
+
+    Öffnet den Browser für Steam OpenID Login.
+    Nach dem Login können Benchmarks zur Community-Datenbank hochgeladen werden.
+    """
+    from linux_game_benchmark.api.auth import login_with_steam, get_current_session
+
+    # Check if already logged in
+    session = get_current_session()
+    if session:
+        console.print(f"[yellow]Bereits eingeloggt als Steam ID: {session.steam_id}[/yellow]")
+        if session.steam_name:
+            console.print(f"[dim]Name: {session.steam_name}[/dim]")
+        console.print("\nZum Ausloggen: [cyan]lgb logout[/cyan]")
+        return
+
+    console.print("[bold]Steam Login[/bold]\n")
+
+    try:
+        session = login_with_steam(timeout=120)
+        if session:
+            console.print(f"\n[bold green]Login erfolgreich![/bold green]")
+            console.print(f"  Steam ID: {session.steam_id}")
+            if session.steam_name:
+                console.print(f"  Name: {session.steam_name}")
+            console.print("\n[dim]Deine Benchmarks können jetzt hochgeladen werden.[/dim]")
+        else:
+            console.print("\n[red]Login fehlgeschlagen oder abgebrochen.[/red]")
+            raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"\n[red]Fehler beim Login: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def logout() -> None:
+    """
+    Vom Steam-Account ausloggen.
+
+    Entfernt die gespeicherten Login-Daten.
+    """
+    from linux_game_benchmark.api.auth import logout as do_logout, get_current_session
+
+    session = get_current_session()
+    if not session:
+        console.print("[yellow]Nicht eingeloggt.[/yellow]")
+        return
+
+    if do_logout():
+        console.print(f"[green]Erfolgreich ausgeloggt.[/green]")
+        console.print(f"[dim]Steam ID {session.steam_id} entfernt.[/dim]")
+    else:
+        console.print("[yellow]Bereits ausgeloggt.[/yellow]")
+
+
+@app.command()
+def status() -> None:
+    """
+    Zeigt den aktuellen Login-Status.
+
+    Zeigt ob ein Steam-Account verknüpft ist und weitere Infos.
+    """
+    from linux_game_benchmark.api.auth import get_current_session
+    from linux_game_benchmark.config.settings import settings
+
+    console.print("[bold]Account Status[/bold]\n")
+
+    session = get_current_session()
+    if session:
+        console.print(f"[green]Eingeloggt[/green]")
+        console.print(f"  Steam ID: {session.steam_id}")
+        if session.steam_name:
+            console.print(f"  Name: {session.steam_name}")
+        console.print(f"  Seit: {session.authenticated_at}")
+        console.print(f"\n[dim]Auth-Datei: {settings.AUTH_FILE}[/dim]")
+    else:
+        console.print("[yellow]Nicht eingeloggt[/yellow]")
+        console.print("\nZum Einloggen: [cyan]lgb login[/cyan]")
+
+
+@app.command()
+def upload(
+    game: Optional[str] = typer.Argument(
+        None,
+        help="Game App ID or name to upload benchmarks for",
+    ),
+    all_games: bool = typer.Option(
+        False,
+        "--all",
+        "-a",
+        help="Upload benchmarks for all games",
+    ),
+) -> None:
+    """
+    Benchmark-Ergebnisse zur Community-Datenbank hochladen.
+
+    Lädt gespeicherte Benchmarks zum Linux Game Bench Server hoch.
+    Erfordert vorherigen Login mit 'lgb login'.
+    """
+    from linux_game_benchmark.api import upload_benchmark, is_logged_in, check_api_status
+    from linux_game_benchmark.benchmark.storage import BenchmarkStorage
+    from linux_game_benchmark.system.hardware_info import get_system_info
+
+    # Check login
+    if not is_logged_in():
+        console.print("[red]Nicht eingeloggt![/red]")
+        console.print("Bitte zuerst einloggen: [cyan]lgb login[/cyan]")
+        raise typer.Exit(1)
+
+    # Check API
+    console.print("[dim]Prüfe Server-Verbindung...[/dim]")
+    if not check_api_status():
+        console.print("[red]Server nicht erreichbar![/red]")
+        console.print("[dim]Bitte später erneut versuchen.[/dim]")
+        raise typer.Exit(1)
+
+    console.print("[green]✓ Server erreichbar[/green]\n")
+
+    storage = BenchmarkStorage()
+    system_info = get_system_info()
+
+    # Get games to upload
+    if all_games:
+        games_to_upload = storage.get_all_games()
+    elif game:
+        # Find specific game
+        try:
+            app_id = int(game)
+            games_to_upload = [app_id]
+        except ValueError:
+            # Search by name
+            all_games_list = storage.get_all_games()
+            matching = [g for g in all_games_list if game.lower() in str(g).lower()]
+            if not matching:
+                console.print(f"[red]Kein Spiel gefunden: {game}[/red]")
+                raise typer.Exit(1)
+            games_to_upload = matching
+    else:
+        # Show available games
+        available = storage.get_all_games()
+        if not available:
+            console.print("[yellow]Keine Benchmarks vorhanden.[/yellow]")
+            console.print("Erstelle zuerst Benchmarks mit: [cyan]lgb record <game>[/cyan]")
+            raise typer.Exit(0)
+
+        console.print("[bold]Verfügbare Benchmarks:[/bold]")
+        for i, game_id in enumerate(available, 1):
+            resolutions = storage.get_all_resolutions(game_id)
+            res_str = ", ".join(resolutions.keys()) if resolutions else "keine"
+            console.print(f"  [{i}] {game_id} ({res_str})")
+
+        console.print(f"\n[dim]Nutze 'lgb upload <app_id>' oder 'lgb upload --all'[/dim]")
+        return
+
+    # Upload each game
+    uploaded = 0
+    failed = 0
+
+    for game_id in games_to_upload:
+        console.print(f"\n[bold cyan]Uploading: {game_id}[/bold cyan]")
+
+        resolutions = storage.get_all_resolutions(game_id)
+        if not resolutions:
+            console.print(f"  [yellow]Keine Daten für {game_id}[/yellow]")
+            continue
+
+        # Get game info for display name
+        game_dir = storage.base_dir / f"steam_{game_id}"
+        game_info_path = game_dir / "game_info.json"
+        game_name = str(game_id)
+
+        if game_info_path.exists():
+            import json
+            with open(game_info_path) as f:
+                info = json.load(f)
+                game_name = info.get("display_name", str(game_id))
+
+        for resolution, runs in resolutions.items():
+            if not runs:
+                continue
+
+            # Get aggregated metrics
+            metrics = storage.aggregate_runs(runs)
+
+            console.print(f"  {resolution}: ", end="")
+
+            result = upload_benchmark(
+                steam_app_id=game_id,
+                game_name=game_name,
+                resolution=resolution,
+                system_info={
+                    "gpu": system_info.get("gpu", {}).get("model", "Unknown"),
+                    "cpu": system_info.get("cpu", {}).get("model", "Unknown"),
+                    "os": system_info.get("os", {}).get("name", "Linux"),
+                    "kernel": system_info.get("os", {}).get("kernel"),
+                    "ram_gb": int(system_info.get("ram", {}).get("total_gb", 0)),
+                },
+                metrics=metrics,
+            )
+
+            if result.success:
+                console.print(f"[green]✓[/green] {result.url}")
+                uploaded += 1
+            else:
+                console.print(f"[red]✗[/red] {result.error}")
+                failed += 1
+
+    # Summary
+    console.print(f"\n[bold]Zusammenfassung:[/bold]")
+    console.print(f"  Hochgeladen: [green]{uploaded}[/green]")
+    if failed:
+        console.print(f"  Fehlgeschlagen: [red]{failed}[/red]")
 
 
 @app.command()
@@ -1166,18 +1480,15 @@ def record_manual(
             # Not a number, search for the game
             game_info = finder.find(query, interactive=True)
 
-        # Extract game name and app_id from GameInfo
-        if game_info:
+        # Extract game name and app_id from GameInfo - Steam App ID required!
+        if game_info and game_info.steam_app_id:
             game_name = game_info.name
             app_id = game_info.steam_app_id
-            if app_id:
-                console.print(f"[green]✓ {game_name} (App ID: {app_id})[/green]")
-            else:
-                console.print(f"[yellow]✓ {game_name} (kein Steam-Bild)[/yellow]")
+            console.print(f"[green]✓ {game_name} (App ID: {app_id})[/green]")
         else:
-            game_name = query if query and not query.isdigit() else "Unknown Game"
-            app_id = None
-            console.print(f"[dim]Manueller Eintrag: {game_name}[/dim]")
+            console.print("[red]Kein Steam-Spiel gefunden![/red]")
+            console.print("[dim]Nur Steam-Spiele können gebenchmarkt werden.[/dim]")
+            return True  # Skip this recording, but continue session
 
         # Track games for report generation with App ID
         if game_name not in game_reports:
@@ -1209,16 +1520,24 @@ def record_manual(
 
         resolution = resolution_map.get(choice, "1920x1080")
 
-        # Check/save fingerprint for this game
+        # Check/save fingerprint for this game - use Steam App ID for storage
         fp = SystemFingerprint.from_system_info(system_info)
-        if not storage.check_fingerprint(game_name, fp):
+        if not storage.check_fingerprint(app_id, fp):
             console.print("[yellow]Neue System-Config für dieses Spiel[/yellow]")
-            storage.archive_old_data(game_name)
-        storage.save_fingerprint(game_name, fp, system_info)
+            storage.archive_old_data(app_id)
+        storage.save_fingerprint(app_id, fp, system_info)
 
-        # Save run
+        # Register game in registry (creates game_info.json)
+        from linux_game_benchmark.games.registry import GameRegistry
+        registry = GameRegistry(base_dir=storage.base_dir)
+        registry.get_or_create(
+            steam_app_id=app_id,
+            display_name=game_name,
+        )
+
+        # Save run using Steam App ID
         storage.save_run(
-            game_name=game_name,
+            game_id=app_id,
             resolution=resolution,
             metrics=metrics,
             log_path=log_path,
@@ -1274,17 +1593,20 @@ def record_manual(
         for game_name, info in game_reports.items():
             console.print(f"\n[bold cyan]{game_name}[/bold cyan]")
 
-            all_res = storage.get_all_resolutions(game_name)
+            # Use Steam App ID for storage operations
+            steam_app_id = info.get("app_id")
+            if not steam_app_id:
+                console.print("  [yellow]Übersprungen - keine Steam App ID[/yellow]")
+                continue
+
+            all_res = storage.get_all_resolutions(steam_app_id)
             if all_res:
                 resolution_data = {res: storage.aggregate_runs(runs) for res, runs in all_res.items()}
-                report_path = storage.get_report_path(game_name)
-
-                # Use the App ID we found during recording
-                app_id = info.get("app_id")
+                report_path = storage.get_report_path(steam_app_id)
 
                 generate_multi_resolution_report(
-                    game_name=game_name,
-                    app_id=app_id,
+                    game_name=game_name,  # Keep display name for report
+                    app_id=steam_app_id,
                     system_info=system_info,
                     resolution_data=resolution_data,
                     output_path=report_path,

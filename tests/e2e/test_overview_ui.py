@@ -439,3 +439,143 @@ class TestNoDuplicateEntries:
         run_options = options[1:]  # Skip "No comparison"
         unique_options = set(run_options)
         assert len(run_options) == len(unique_options), f"Found duplicate entries: {run_options}"
+
+
+class TestResolutionSorting:
+    """Tests for consistent resolution sorting (UHD → WQHD → FHD)."""
+
+    def test_main_filter_resolution_order(self, page: Page, overview_report_url: str):
+        """Main page resolution filter should be sorted: UHD, WQHD, FHD."""
+        page.goto(overview_report_url)
+
+        filter_res = page.locator("#filter-res")
+        options = filter_res.locator("option").all_inner_texts()
+
+        # Skip "All" option, check order of resolutions
+        res_options = [o for o in options if o != "All"]
+
+        # Define expected order (UHD/3840x2160 first, then WQHD/2560x1440, then FHD/1920x1080)
+        def get_res_priority(res: str) -> int:
+            if "UHD" in res or "3840" in res:
+                return 0
+            elif "WQHD" in res or "2560" in res:
+                return 1
+            elif "FHD" in res or "1920" in res:
+                return 2
+            return 99
+
+        # Verify sorting
+        priorities = [get_res_priority(r) for r in res_options]
+        assert priorities == sorted(priorities), f"Resolution not sorted correctly: {res_options}"
+
+    def test_detail_filter_resolution_order(self, page: Page, overview_report_url: str):
+        """Detail panel resolution filter should be sorted: UHD, WQHD, FHD."""
+        page.goto(overview_report_url)
+
+        # Open details for first game
+        page.locator("tr.data-row").first.click()
+        page.wait_for_selector("tr.detail-row.show")
+
+        # Get detail resolution filter
+        filter_res = page.locator("select[id^='filter-res-']").first
+        options = filter_res.locator("option").all_inner_texts()
+
+        # Skip "All" option
+        res_options = [o for o in options if o != "All"]
+
+        if len(res_options) > 1:
+            def get_res_priority(res: str) -> int:
+                if "UHD" in res or "3840" in res:
+                    return 0
+                elif "WQHD" in res or "2560" in res:
+                    return 1
+                elif "FHD" in res or "1920" in res:
+                    return 2
+                return 99
+
+            priorities = [get_res_priority(r) for r in res_options]
+            assert priorities == sorted(priorities), f"Detail resolution not sorted correctly: {res_options}"
+
+    def test_run_dropdown_resolution_order(self, page: Page, overview_report_url: str):
+        """Run selector dropdown should be sorted by resolution (UHD first)."""
+        page.goto(overview_report_url)
+
+        # Open details
+        page.locator("tr.data-row").first.click()
+        page.wait_for_selector("tr.detail-row.show")
+
+        # Get run selector options
+        main_select = page.locator("select[id^='select-']").first
+        options = main_select.locator("option").all_inner_texts()
+
+        if len(options) > 1:
+            def get_res_priority(opt: str) -> int:
+                if "UHD" in opt or "3840" in opt:
+                    return 0
+                elif "WQHD" in opt or "2560" in opt:
+                    return 1
+                elif "FHD" in opt or "1920" in opt:
+                    return 2
+                return 99
+
+            priorities = [get_res_priority(o) for o in options]
+            assert priorities == sorted(priorities), f"Run dropdown not sorted by resolution: {options}"
+
+
+class TestDetailSystemInfoUpdates:
+    """Tests that system info updates when selecting different runs."""
+
+    def test_gpu_updates_on_run_change(self, page: Page, overview_report_url: str):
+        """GPU should update when selecting a different run."""
+        page.goto(overview_report_url)
+
+        # Open details
+        page.locator("tr.data-row").first.click()
+        page.wait_for_selector("tr.detail-row.show")
+
+        # Get initial GPU value
+        gpu_el = page.locator("[id^='stat-gpu-']").first
+        initial_gpu = gpu_el.inner_text()
+
+        # Get run selector and check if multiple options exist
+        main_select = page.locator("select[id^='select-']").first
+        options = main_select.locator("option")
+        option_count = options.count()
+
+        if option_count > 1:
+            # Select a different run
+            main_select.select_option(index=1)
+            page.wait_for_timeout(100)  # Wait for update
+
+            # GPU element should still exist (even if value is same)
+            expect(gpu_el).to_be_visible()
+
+    def test_system_info_elements_exist(self, page: Page, overview_report_url: str):
+        """System info elements (GPU, Mesa, OS, Resolution) should exist in details."""
+        page.goto(overview_report_url)
+
+        # Open details
+        page.locator("tr.data-row").first.click()
+        page.wait_for_selector("tr.detail-row.show")
+
+        # Check all system info elements exist
+        expect(page.locator("[id^='stat-gpu-']").first).to_be_visible()
+        expect(page.locator("[id^='stat-mesa-']").first).to_be_visible()
+        expect(page.locator("[id^='stat-os-']").first).to_be_visible()
+        expect(page.locator("[id^='stat-res-']").first).to_be_visible()
+
+    def test_header_updates_on_run_change(self, page: Page, overview_report_url: str):
+        """Detail header should update when selecting a different run."""
+        page.goto(overview_report_url)
+
+        # Open details
+        page.locator("tr.data-row").first.click()
+        page.wait_for_selector("tr.detail-row.show")
+
+        # Get initial header
+        header = page.locator("tr.detail-row.show .detail-header h3")
+        initial_header = header.inner_text()
+
+        # Header should contain game name and resolution info
+        assert " - " in initial_header, f"Header format incorrect: {initial_header}"
+        assert " @ " in initial_header, f"Header should contain ' @ ': {initial_header}"

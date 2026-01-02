@@ -4,6 +4,9 @@ Benchmark Storage Manager.
 Handles storing and aggregating benchmark results per game,
 with support for multiple resolutions, runs, and MULTIPLE SYSTEMS.
 
+Uses Steam App ID as canonical identifier for games.
+Folder structure: steam_{app_id}/
+
 IMPORTANT: Data is NEVER archived or deleted. All benchmark data from
 all systems is kept and can be viewed/compared in the reports.
 """
@@ -13,7 +16,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 import shutil
 
 
@@ -91,11 +94,15 @@ class BenchmarkStorage:
     """
     Manages benchmark storage with per-game, per-system, per-resolution organization.
 
+    Uses Steam App ID as canonical identifier. No duplicates from typos possible.
+
     IMPORTANT: Data is NEVER archived or deleted. All systems are kept.
 
     Structure:
         ~/benchmark_results/
-            {GameName}/
+            games.json                  - Game registry
+            steam_1091500/              - Cyberpunk 2077
+                game_info.json
                 EndeavourOS_54f880f1/   - System 1
                     fingerprint.json
                     system_info.json
@@ -107,6 +114,8 @@ class BenchmarkStorage:
                     system_info.json
                     UHD/
                 report.html             - Combined report for ALL systems
+            steam_1086940/              - Baldur's Gate 3
+                ...
     """
 
     def __init__(self, base_dir: Optional[Path] = None):
@@ -114,57 +123,86 @@ class BenchmarkStorage:
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self._current_system_id: Optional[str] = None
 
-    def get_game_dir(self, game_name: str) -> Path:
-        """Get or create directory for a game."""
-        # Sanitize game name for filesystem
-        safe_name = "".join(c for c in game_name if c.isalnum() or c in " _-").strip()
-        safe_name = safe_name.replace(" ", "_")
-        game_dir = self.base_dir / safe_name
+    def get_game_dir(self, game_id: Union[int, str]) -> Path:
+        """
+        Get or create directory for a game.
+
+        Args:
+            game_id: Steam App ID (int) or canonical ID string (e.g., "steam_1091500")
+                     Legacy: Also accepts game names for backwards compatibility
+
+        Returns:
+            Path to game directory
+        """
+        # Handle Steam App ID (int)
+        if isinstance(game_id, int):
+            folder_name = f"steam_{game_id}"
+        # Handle canonical ID string (steam_XXXXX)
+        elif isinstance(game_id, str) and game_id.startswith("steam_"):
+            folder_name = game_id
+        else:
+            # Legacy: sanitize game name for backwards compatibility
+            safe_name = "".join(c for c in game_id if c.isalnum() or c in " _-").strip()
+            safe_name = safe_name.replace(" ", "_")
+            folder_name = safe_name
+
+        game_dir = self.base_dir / folder_name
         game_dir.mkdir(parents=True, exist_ok=True)
         return game_dir
 
-    def get_system_dir(self, game_name: str, system_id: str) -> Path:
+    def get_system_dir(self, game_id: Union[int, str], system_id: str) -> Path:
         """Get or create directory for a specific system within a game."""
-        game_dir = self.get_game_dir(game_name)
+        game_dir = self.get_game_dir(game_id)
         system_dir = game_dir / system_id
         system_dir.mkdir(parents=True, exist_ok=True)
         return system_dir
 
     def get_all_games(self) -> list[str]:
-        """Get list of all games that have benchmark data."""
+        """
+        Get list of all games that have benchmark data.
+
+        Returns:
+            List of game names (readable format for legacy, steam_XXXXX for new format)
+        """
         games = []
         if not self.base_dir.exists():
             return games
 
         for item in self.base_dir.iterdir():
-            # Skip recording_session and other non-game directories
-            if item.is_dir() and item.name != "recording_session":
-                # Check if it has actual benchmark data (in any system subfolder)
-                has_data = False
-                for subdir in item.iterdir():
-                    if subdir.is_dir() and not subdir.name.startswith("archive"):
-                        # Check for resolution folders or direct resolution folders (legacy)
-                        for res in ["FHD", "WQHD", "UHD"]:
-                            if (subdir / res).exists() and any((subdir / res).glob("*.json")):
-                                has_data = True
-                                break
-                            # Also check legacy structure
-                            if subdir.name == res and any(subdir.glob("*.json")):
-                                has_data = True
-                                break
-                    if has_data:
-                        break
+            # Skip recording_session, games.json and other non-game directories
+            if not item.is_dir() or item.name in ["recording_session"]:
+                continue
 
+            # Check if it has actual benchmark data (in any system subfolder)
+            has_data = False
+            for subdir in item.iterdir():
+                if subdir.is_dir() and not subdir.name.startswith("archive"):
+                    # Check for resolution folders or direct resolution folders (legacy)
+                    for res in ["FHD", "WQHD", "UHD"]:
+                        if (subdir / res).exists() and any((subdir / res).glob("*.json")):
+                            has_data = True
+                            break
+                        # Also check legacy structure
+                        if subdir.name == res and any(subdir.glob("*.json")):
+                            has_data = True
+                            break
                 if has_data:
-                    # Convert directory name back to readable name
-                    game_name = item.name.replace("_", " ")
-                    games.append(game_name)
+                    break
+
+            if has_data:
+                # For steam_XXXXX folders, keep as-is
+                # For legacy folders, convert underscores back to spaces
+                if item.name.startswith("steam_"):
+                    games.append(item.name)
+                else:
+                    # Legacy: convert folder name back to readable name
+                    games.append(item.name.replace("_", " "))
 
         return sorted(games)
 
-    def get_all_systems(self, game_name: str) -> list[str]:
+    def get_all_systems(self, game_id: Union[int, str]) -> list[str]:
         """Get list of all system IDs that have data for a game."""
-        game_dir = self.get_game_dir(game_name)
+        game_dir = self.get_game_dir(game_id)
         systems = []
 
         for item in game_dir.iterdir():
@@ -179,7 +217,7 @@ class BenchmarkStorage:
 
         return sorted(systems)
 
-    def check_fingerprint(self, game_name: str, current_fp: SystemFingerprint) -> bool:
+    def check_fingerprint(self, game_id: Union[int, str], current_fp: SystemFingerprint) -> bool:
         """
         Check if current system already has data for this game.
 
@@ -190,7 +228,7 @@ class BenchmarkStorage:
         # Each system gets its own folder
         return True
 
-    def archive_old_data(self, game_name: str) -> Optional[Path]:
+    def archive_old_data(self, game_id: Union[int, str]) -> Optional[Path]:
         """
         DEPRECATED: No longer archives data. All systems are kept.
 
@@ -200,11 +238,11 @@ class BenchmarkStorage:
         # NO ARCHIVING - all data is kept
         return None
 
-    def save_fingerprint(self, game_name: str, fp: SystemFingerprint, system_info: dict) -> None:
+    def save_fingerprint(self, game_id: Union[int, str], fp: SystemFingerprint, system_info: dict) -> None:
         """Save system fingerprint and full system info."""
         system_id = fp.get_system_id()
         self._current_system_id = system_id
-        system_dir = self.get_system_dir(game_name, system_id)
+        system_dir = self.get_system_dir(game_id, system_id)
 
         # Save fingerprint
         fp_data = fp.to_dict()
@@ -218,7 +256,7 @@ class BenchmarkStorage:
 
     def save_run(
         self,
-        game_name: str,
+        game_id: Union[int, str],
         resolution: str,
         metrics: dict,
         log_path: Optional[Path] = None,
@@ -229,7 +267,7 @@ class BenchmarkStorage:
         Save a benchmark run.
 
         Args:
-            game_name: Name of the game
+            game_id: Steam App ID (int) or canonical ID string (e.g., "steam_1091500")
             resolution: Resolution string (e.g., "1920x1080")
             metrics: Metrics dictionary from analyzer
             log_path: Optional path to original CSV log
@@ -244,7 +282,7 @@ class BenchmarkStorage:
         if not sid:
             raise ValueError("No system_id provided and no current system set. Call save_fingerprint first.")
 
-        system_dir = self.get_system_dir(game_name, sid)
+        system_dir = self.get_system_dir(game_id, sid)
 
         # Get resolution folder name
         res_folder = RESOLUTION_MAP.get(resolution, "OTHER")
@@ -283,9 +321,9 @@ class BenchmarkStorage:
 
         return run_file
 
-    def get_runs(self, game_name: str, resolution: str, system_id: Optional[str] = None) -> list[dict]:
+    def get_runs(self, game_id: Union[int, str], resolution: str, system_id: Optional[str] = None) -> list[dict]:
         """Get all runs for a game at a specific resolution, optionally for a specific system."""
-        game_dir = self.get_game_dir(game_name)
+        game_dir = self.get_game_dir(game_id)
         res_folder = RESOLUTION_MAP.get(resolution, "OTHER")
 
         runs = []
@@ -319,16 +357,16 @@ class BenchmarkStorage:
 
         return runs
 
-    def get_all_resolutions(self, game_name: str, system_id: Optional[str] = None) -> dict[str, list[dict]]:
+    def get_all_resolutions(self, game_id: Union[int, str], system_id: Optional[str] = None) -> dict[str, list[dict]]:
         """Get all runs for all resolutions, optionally for a specific system."""
         result = {}
         for resolution, folder in RESOLUTION_MAP.items():
-            runs = self.get_runs(game_name, resolution, system_id)
+            runs = self.get_runs(game_id, resolution, system_id)
             if runs:
                 result[resolution] = runs
         return result
 
-    def get_all_systems_data(self, game_name: str) -> dict[str, dict]:
+    def get_all_systems_data(self, game_id: Union[int, str]) -> dict[str, dict]:
         """
         Get all data organized by system.
 
@@ -339,7 +377,7 @@ class BenchmarkStorage:
                 "resolutions": {resolution -> [runs]}
             }
         """
-        game_dir = self.get_game_dir(game_name)
+        game_dir = self.get_game_dir(game_id)
         result = {}
 
         for system_dir in game_dir.iterdir():
@@ -363,7 +401,7 @@ class BenchmarkStorage:
                     fingerprint = json.loads(fp_file.read_text())
 
                 # Get resolutions
-                resolutions = self.get_all_resolutions(game_name, system_id)
+                resolutions = self.get_all_resolutions(game_id, system_id)
 
                 if resolutions:  # Only include if there's actual data
                     result[system_id] = {
@@ -451,9 +489,9 @@ class BenchmarkStorage:
             "summary": last_metrics.get("summary", {}),
         }
 
-    def get_system_info(self, game_name: str, system_id: Optional[str] = None) -> Optional[dict]:
+    def get_system_info(self, game_id: Union[int, str], system_id: Optional[str] = None) -> Optional[dict]:
         """Get stored system info for a game, optionally for a specific system."""
-        game_dir = self.get_game_dir(game_name)
+        game_dir = self.get_game_dir(game_id)
 
         if system_id:
             info_file = game_dir / system_id / "system_info.json"
@@ -468,9 +506,37 @@ class BenchmarkStorage:
             return json.loads(info_file.read_text())
         return None
 
-    def get_report_path(self, game_name: str) -> Path:
+    def get_report_path(self, game_id: Union[int, str]) -> Path:
         """Get path for the HTML report."""
-        return self.get_game_dir(game_name) / "report.html"
+        return self.get_game_dir(game_id) / "report.html"
+
+    def get_game_display_name(self, game_id: Union[int, str]) -> str:
+        """
+        Get the display name for a game.
+
+        Reads from game_info.json if available, otherwise returns the folder name.
+
+        Args:
+            game_id: Steam App ID (int) or folder name (str)
+
+        Returns:
+            Display name string
+        """
+        game_dir = self.get_game_dir(game_id)
+        info_file = game_dir / "game_info.json"
+
+        if info_file.exists():
+            try:
+                data = json.loads(info_file.read_text())
+                return data.get("display_name", game_dir.name)
+            except (json.JSONDecodeError, KeyError):
+                pass
+
+        # Fallback: convert folder name to readable format
+        folder_name = game_dir.name
+        if folder_name.startswith("steam_"):
+            return f"Steam App {folder_name.replace('steam_', '')}"
+        return folder_name.replace("_", " ")
 
     def regenerate_overview_report(self) -> Optional[Path]:
         """

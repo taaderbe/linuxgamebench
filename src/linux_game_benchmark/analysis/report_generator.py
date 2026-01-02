@@ -3991,12 +3991,20 @@ def generate_overview_report(
                                     <div class="label">Consistency</div>
                                 </div>
                                 <div class="detail-stat">
-                                    <div class="value" style="color: var(--text);">{b['gpu']}</div>
+                                    <div class="value" id="stat-gpu-{row_id}" style="color: var(--text);">{b['gpu']}</div>
                                     <div class="label">GPU</div>
                                 </div>
                                 <div class="detail-stat">
-                                    <div class="value" style="color: var(--text);">{b['mesa']}</div>
+                                    <div class="value" id="stat-mesa-{row_id}" style="color: var(--text);">{b['mesa']}</div>
                                     <div class="label">Mesa</div>
+                                </div>
+                                <div class="detail-stat">
+                                    <div class="value" id="stat-os-{row_id}" style="color: var(--text);">{b['os']}</div>
+                                    <div class="label">OS</div>
+                                </div>
+                                <div class="detail-stat">
+                                    <div class="value" id="stat-res-{row_id}" style="color: var(--text);">{b['resolution']}</div>
+                                    <div class="label">Resolution</div>
                                 </div>
                             </div>
                             <div class="chart-section">
@@ -4257,9 +4265,19 @@ def generate_overview_report(
                 }}
             }});
 
-            // Sort runs by timestamp (newest first) while keeping original indices
+            // Sort runs by resolution (UHD first) then by timestamp (newest first)
+            const resOrder = {{
+                'UHD': 0, '3840x2160': 0,
+                'WQHD': 1, '2560x1440': 1,
+                'FHD': 2, '1920x1080': 2
+            }};
             const sortedGameRuns = gameRuns.map((runData, idx) => ({{ runData, originalIdx: idx }}))
-                .sort((a, b) => new Date(b.runData.run.timestamp) - new Date(a.runData.run.timestamp));
+                .sort((a, b) => {{
+                    const resA = resOrder[a.runData.resolution] ?? 99;
+                    const resB = resOrder[b.runData.resolution] ?? 99;
+                    if (resA !== resB) return resA - resB;
+                    return new Date(b.runData.run.timestamp) - new Date(a.runData.run.timestamp);
+                }});
 
             // Populate BOTH dropdowns with ALL game runs (sorted by date, newest first)
             sortedGameRuns.forEach((item) => {{
@@ -4309,8 +4327,12 @@ def generate_overview_report(
             const filterRes = document.getElementById(`filter-res-${{rowId}}`);
             if (filterRes) {{
                 Array.from(uniqueResolutions).sort((a, b) => {{
-                    const order = {{ 'UHD': 0, 'WQHD': 1, 'FHD': 2 }};
-                    return (order[a] || 99) - (order[b] || 99);
+                    const order = {{
+                        'UHD': 0, '3840x2160': 0,
+                        'WQHD': 1, '2560x1440': 1,
+                        'FHD': 2, '1920x1080': 2
+                    }};
+                    return (order[a] ?? 99) - (order[b] ?? 99);
                 }}).forEach(res => {{
                     const option = document.createElement('option');
                     option.value = res;
@@ -4412,10 +4434,20 @@ def generate_overview_report(
             select.innerHTML = '';
             compareSelect.innerHTML = '<option value="">No comparison</option>';
 
-            // Sort filtered runs by timestamp (newest first) and keep original indices
+            // Sort filtered runs by resolution (UHD first) then by timestamp (newest first)
+            const resOrder = {{
+                'UHD': 0, '3840x2160': 0,
+                'WQHD': 1, '2560x1440': 1,
+                'FHD': 2, '1920x1080': 2
+            }};
             const sortedFilteredRuns = filteredRuns
                 .map(runData => ({{ runData, originalIdx: gameRuns.indexOf(runData) }}))
-                .sort((a, b) => new Date(b.runData.run.timestamp) - new Date(a.runData.run.timestamp));
+                .sort((a, b) => {{
+                    const resA = resOrder[a.runData.resolution] ?? 99;
+                    const resB = resOrder[b.runData.resolution] ?? 99;
+                    if (resA !== resB) return resA - resB;
+                    return new Date(b.runData.run.timestamp) - new Date(a.runData.run.timestamp);
+                }});
 
             // Find the newest run's original index for pre-selection
             const newestOriginalIdx = sortedFilteredRuns.length > 0 ? sortedFilteredRuns[0].originalIdx : 0;
@@ -4663,6 +4695,23 @@ def generate_overview_report(
                 if (textNode && textNode.nodeType === Node.TEXT_NODE) {{
                     textNode.textContent = consistencyRating.charAt(0).toUpperCase() + consistencyRating.slice(1);
                 }}
+            }}
+
+            // Update system info (GPU, Mesa, OS, Resolution)
+            const gpuEl = document.getElementById('stat-gpu-' + rowId);
+            const mesaEl = document.getElementById('stat-mesa-' + rowId);
+            const osEl = document.getElementById('stat-os-' + rowId);
+            const resEl = document.getElementById('stat-res-' + rowId);
+
+            if (gpuEl) gpuEl.textContent = runData1.gpu || 'Unknown';
+            if (mesaEl) mesaEl.textContent = runData1.mesa || 'Unknown';
+            if (osEl) osEl.textContent = runData1.os || 'Unknown';
+            if (resEl) resEl.textContent = runData1.resolution || 'Unknown';
+
+            // Update header title
+            const headerEl = document.querySelector(`#detail-${{rowId}} .detail-header h3`);
+            if (headerEl) {{
+                headerEl.textContent = `${{gameName}} - ${{runData1.resolution}} @ ${{runData1.os}}`;
             }}
         }}
 

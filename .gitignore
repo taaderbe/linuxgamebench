@@ -41,3 +41,25 @@ benchmark_results/
 
 # Claude plans (local)
 .claude/
+
+# VM Keys (NEVER commit)
+Keys_VM/
+
+# Session notes (internal)
+SESSION_NOTES.md
+PLAN.md
+
+# Playwright MCP
+.playwright-mcp/
+
+# Local utility scripts
+auto_process_poe.py
+fix_cyberpunk_report.py
+process_poe_logs.py
+regenerate_all_reports.py
+regenerate_poe_report.py
+regenerate_simple.py
+update_7d2d_charts.py
+update_tomb_raider_charts.py
+test_app_id_finder.py
+test_game_selection.py

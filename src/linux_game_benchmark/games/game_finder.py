@@ -1,11 +1,8 @@
 """
-Unified Game Finder.
+Steam-Only Game Finder.
 
-Searches for games across multiple sources with fallback chain:
-1. Local Steam library (installed games)
-2. Steam Store API (all Steam games)
-3. IGDB API (optional, for non-Steam games)
-4. Manual entry (fallback)
+Searches for Steam games only. Non-Steam games are not supported.
+This ensures consistent game identification via Steam App ID.
 """
 
 from typing import Optional, Callable
@@ -13,6 +10,7 @@ from rich.console import Console
 from rich.table import Table
 
 from linux_game_benchmark.games.models import GameInfo, GameSource
+from linux_game_benchmark.games.registry import GameRegistry
 from linux_game_benchmark.steam.library_scanner import SteamLibraryScanner
 from linux_game_benchmark.steam.app_id_finder import (
     find_steam_app_id,
@@ -21,21 +19,36 @@ from linux_game_benchmark.steam.app_id_finder import (
 )
 
 
+class NoSteamGameFoundError(Exception):
+    """Raised when no Steam game could be found for the query."""
+
+    pass
+
+
 class GameFinder:
     """
-    Unified game finder that searches multiple sources.
+    Steam-Only Game Finder.
+
+    Only finds Steam games. Without a Steam App ID, no benchmark is possible.
+    This ensures:
+    - No duplicate entries from typos
+    - Consistent game identification
+    - Cover images always available
 
     Usage:
         finder = GameFinder()
         game = finder.find("Baldur's Gate 3")
         if game:
             print(f"Found: {game.name} (App ID: {game.steam_app_id})")
+        else:
+            print("No Steam game found!")
     """
 
     def __init__(
         self,
         console: Optional[Console] = None,
         on_status: Optional[Callable[[str], None]] = None,
+        registry: Optional[GameRegistry] = None,
     ):
         """
         Initialize the game finder.
@@ -43,9 +56,11 @@ class GameFinder:
         Args:
             console: Rich console for output (optional)
             on_status: Callback for status messages (optional)
+            registry: GameRegistry instance (optional, creates new if None)
         """
         self.console = console or Console()
         self.on_status = on_status
+        self.registry = registry
         self._steam_scanner: Optional[SteamLibraryScanner] = None
         self._local_games_cache: Optional[list[dict]] = None
 
@@ -55,7 +70,7 @@ class GameFinder:
             self.on_status(message)
 
     @property
-    def steam_scanner(self) -> SteamLibraryScanner:
+    def steam_scanner(self) -> Optional[SteamLibraryScanner]:
         """Lazy-load Steam scanner."""
         if self._steam_scanner is None:
             try:
@@ -82,22 +97,25 @@ class GameFinder:
         query: str,
         interactive: bool = True,
         auto_select_threshold: float = 0.95,
+        require_steam: bool = True,
     ) -> Optional[GameInfo]:
         """
-        Find a game by name or App ID.
+        Find a Steam game by name or App ID.
 
         Search order:
         1. Local Steam library (installed games)
         2. Steam Store API (all Steam games)
-        3. Manual entry (fallback)
+
+        If no Steam game is found, returns None (no manual fallback!).
 
         Args:
             query: Game name or Steam App ID
             interactive: If True, show selection menu for multiple matches
             auto_select_threshold: Auto-select if similarity >= this value
+            require_steam: If True, return None if no Steam game found
 
         Returns:
-            GameInfo if found, None if user cancelled
+            GameInfo if found, None if not found or user cancelled
         """
         # Try to parse as App ID first
         try:
@@ -130,9 +148,41 @@ class GameFinder:
 
             return steam_results[0]
 
-        # 3. Fallback to manual
-        self._log("Nicht gefunden - manueller Eintrag")
-        return GameInfo.manual(query)
+        # No Steam game found
+        if require_steam:
+            self.console.print(
+                "\n[red]Kein Steam-Spiel gefunden![/red]\n"
+                "[dim]Nur Steam-Spiele werden unterstützt.\n"
+                "Tipp: Versuche den exakten Spielnamen oder die Steam App ID.[/dim]"
+            )
+            return None
+
+        return None
+
+    def find_required(
+        self,
+        query: str,
+        interactive: bool = True,
+    ) -> GameInfo:
+        """
+        Find a Steam game, raise exception if not found.
+
+        Args:
+            query: Game name or Steam App ID
+            interactive: If True, show selection menu for multiple matches
+
+        Returns:
+            GameInfo (always has steam_app_id)
+
+        Raises:
+            NoSteamGameFoundError: If no Steam game found
+        """
+        result = self.find(query, interactive=interactive, require_steam=True)
+        if result is None or result.steam_app_id is None:
+            raise NoSteamGameFoundError(
+                f"Kein Steam-Spiel gefunden für: {query}"
+            )
+        return result
 
     def _find_by_app_id(self, app_id: int) -> Optional[GameInfo]:
         """Find game by Steam App ID."""
@@ -142,7 +192,7 @@ class GameFinder:
             if local:
                 return GameInfo.from_steam_local(local)
 
-        # Otherwise create from App ID
+        # Create from App ID (valid Steam game, just not installed)
         return GameInfo(
             name=f"Steam App {app_id}",
             source=GameSource.STEAM_STORE,
@@ -222,7 +272,7 @@ class GameFinder:
             app_id = str(game.steam_app_id) if game.steam_app_id else "-"
             table.add_row(f"[{i}]", game.name, app_id, match_pct)
 
-        table.add_row("[0]", "Manuell eingeben", "", "")
+        table.add_row("[0]", "[red]Abbrechen[/red]", "", "")
 
         self.console.print(table)
 
@@ -232,11 +282,8 @@ class GameFinder:
             choice_idx = int(choice)
 
             if choice_idx == 0:
-                # Manual entry
-                name = input("Spielname: ").strip()
-                if not name:
-                    name = original_query
-                return GameInfo.manual(name)
+                # User cancelled
+                return None
 
             if 1 <= choice_idx <= len(games):
                 return games[choice_idx - 1]
@@ -251,50 +298,29 @@ class GameFinder:
         """Get all locally installed games as GameInfo objects."""
         return [GameInfo.from_steam_local(g) for g in self.local_games]
 
-    def get_existing_game_names(self) -> list[str]:
-        """Get list of game names from existing benchmark data."""
-        from linux_game_benchmark.benchmark.storage import BenchmarkStorage
-
-        try:
-            storage = BenchmarkStorage()
-            return storage.get_all_games()
-        except Exception:
-            return []
-
-    def find_or_select_existing(
-        self,
-        query: str,
-        existing_games: Optional[list[str]] = None,
-    ) -> Optional[GameInfo]:
+    def register_game(self, game_info: GameInfo) -> str:
         """
-        Find a game or let user select from existing benchmarked games.
-
-        This is useful for the record_manual flow where we want to
-        suggest previously benchmarked games.
+        Register a game in the registry and return canonical ID.
 
         Args:
-            query: Search query or selection from existing
-            existing_games: List of existing game names (auto-fetched if None)
+            game_info: The game to register
 
         Returns:
-            GameInfo or None if cancelled
+            Canonical ID (e.g., "steam_1086940")
+
+        Raises:
+            ValueError: If game has no Steam App ID
         """
-        if existing_games is None:
-            existing_games = self.get_existing_game_names()
+        if game_info.steam_app_id is None:
+            raise ValueError("Nur Steam-Spiele können registriert werden!")
 
-        # Check if query is a number (selection from existing list)
-        try:
-            idx = int(query)
-            if 1 <= idx <= len(existing_games):
-                # User selected existing game
-                game_name = existing_games[idx - 1]
-                # Try to find full info for this game
-                return self.find(game_name, interactive=False)
-            elif idx == 0:
-                # User wants to enter new game
-                return None  # Signal to prompt for new name
-        except ValueError:
-            pass
+        if self.registry is None:
+            self.registry = GameRegistry()
 
-        # Query is a game name, search for it
-        return self.find(query, interactive=True)
+        entry = self.registry.get_or_create(
+            steam_app_id=game_info.steam_app_id,
+            display_name=game_info.name,
+            cover_url=game_info.get_cover_url(),
+        )
+
+        return entry.canonical_id
