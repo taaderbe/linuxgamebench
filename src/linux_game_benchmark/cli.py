@@ -158,12 +158,48 @@ def list_games(
     console.print(f"\nTotal: {len(games)} games")
 
 
+def _check_mangohud_global_config() -> bool:
+    """Check if MangoHud is globally enabled."""
+    env_dir = Path.home() / ".config" / "environment.d"
+    mangohud_conf = env_dir / "mangohud.conf"
+
+    if mangohud_conf.exists():
+        content = mangohud_conf.read_text()
+        if "MANGOHUD=1" in content:
+            return True
+    return False
+
+
+def _enable_mangohud_globally() -> bool:
+    """Enable MangoHud globally via environment.d."""
+    env_dir = Path.home() / ".config" / "environment.d"
+    mangohud_conf = env_dir / "mangohud.conf"
+
+    try:
+        env_dir.mkdir(parents=True, exist_ok=True)
+
+        # Append or create
+        if mangohud_conf.exists():
+            content = mangohud_conf.read_text()
+            if "MANGOHUD=1" not in content:
+                with open(mangohud_conf, "a") as f:
+                    f.write("\nMANGOHUD=1\n")
+        else:
+            mangohud_conf.write_text("MANGOHUD=1\n")
+
+        return True
+    except Exception as e:
+        console.print(f"[red]Error enabling MangoHud: {e}[/red]")
+        return False
+
+
 @app.command()
 def check() -> None:
     """
     Check system requirements for benchmarking.
 
     Verifies MangoHud, Steam, Gamescope and other tools are available.
+    Automatically enables MangoHud globally if not configured.
     """
     from linux_game_benchmark.mangohud.manager import check_mangohud_installation
     import shutil
@@ -176,6 +212,20 @@ def check() -> None:
     mangohud = check_mangohud_installation()
     if mangohud["installed"]:
         console.print(f"[green]MangoHud:[/green] {mangohud.get('version', 'Installed')}")
+
+        # Check if MangoHud is globally enabled
+        if _check_mangohud_global_config():
+            console.print("[green]MangoHud Global:[/green] Enabled (MANGOHUD=1)")
+        else:
+            console.print("[yellow]MangoHud Global:[/yellow] Not enabled")
+            console.print("  MangoHud needs to be enabled globally for benchmarks to work.")
+
+            if typer.confirm("  Enable MangoHud globally now?", default=True):
+                if _enable_mangohud_globally():
+                    console.print("[green]  ✓ MangoHud enabled globally![/green]")
+                    console.print("[yellow]  → Log out and back in (or reboot) for changes to take effect.[/yellow]")
+                else:
+                    console.print("[red]  ✗ Failed to enable MangoHud[/red]")
     else:
         console.print("[red]MangoHud:[/red] Not installed")
         console.print("  Install: sudo pacman -S mangohud (Arch) / apt install mangohud (Debian)")
