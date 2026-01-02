@@ -26,28 +26,33 @@ Optional:
 
 ## Installation
 
-### Arch Linux / CachyOS
+### Arch Linux / CachyOS (Recommended)
 
 ```bash
 # Install MangoHud and optional tools
 sudo pacman -S mangohud lib32-mangohud gamemode lib32-gamemode gamescope
 
+# Install pipx (manages Python CLI tools)
+sudo pacman -S python-pipx
+
 # Install the tool
-pip install linux-game-benchmark
+pipx install git+https://github.com/taaderbe/linuxgamebench.git
 ```
 
 ### Ubuntu/Debian
 
 ```bash
-sudo apt install mangohud
-pip install linux-game-benchmark
+sudo apt install mangohud pipx
+pipx install git+https://github.com/taaderbe/linuxgamebench.git
 ```
 
-### Install from Source
+### Install from Source (Development)
 
 ```bash
 git clone https://github.com/taaderbe/linuxgamebench
 cd linuxgamebench
+python -m venv .venv
+source .venv/bin/activate
 pip install -e .
 ```
 
