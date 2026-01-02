@@ -431,12 +431,9 @@ class GameLauncher:
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
 
-        # Also try to terminate the Steam process we started
-        if self._game_process and self._game_process.poll() is None:
-            try:
-                self._game_process.terminate()
-            except Exception:
-                pass
+        # Note: We intentionally do NOT terminate self._game_process here
+        # because that's the Steam launcher process - terminating it would
+        # close the entire Steam client window, not just the game.
 
         # Wait a moment and verify
         time.sleep(1.0)
