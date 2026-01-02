@@ -46,8 +46,8 @@ pip install linux-game-benchmark
 ### Aus Source installieren
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/linux-game-benchmark
-cd linux-game-benchmark
+git clone https://github.com/taaderbe/linuxgamebench
+cd linuxgamebench
 pip install -e .
 ```
 
