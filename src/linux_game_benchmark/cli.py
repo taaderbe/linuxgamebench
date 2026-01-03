@@ -607,6 +607,11 @@ def benchmark(
     avg_1low = sum(m.get("fps", {}).get("1_percent_low", 0) for m in all_metrics) / len(all_metrics)
     avg_01low = sum(m.get("fps", {}).get("0.1_percent_low", 0) for m in all_metrics) / len(all_metrics)
 
+    # Get stutter and consistency ratings from last recording
+    last_metrics = all_metrics[-1] if all_metrics else {}
+    stutter_rating = last_metrics.get("stutter", {}).get("stutter_rating")
+    consistency_rating = last_metrics.get("frame_pacing", {}).get("consistency_rating")
+
     # FPS Summary
     console.print(f"\n[bold cyan]FPS Summary[/bold cyan]")
     console.print(f"  Average:  {avg_fps:.1f} FPS")
@@ -668,6 +673,8 @@ def benchmark(
             "fps_min": avg_min,
             "fps_1low": avg_1low,
             "fps_01low": avg_01low,
+            "stutter_rating": stutter_rating,
+            "consistency_rating": consistency_rating,
         },
     )
 
