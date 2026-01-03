@@ -657,6 +657,11 @@ def benchmark(
         console.print("[red]Server unreachable. Try 'lgb upload' later.[/red]")
         raise typer.Exit(0)
 
+    # Get frametimes from last recording
+    frametimes = None
+    if recordings and recordings[-1].get("frametimes"):
+        frametimes = recordings[-1]["frametimes"]
+
     result = upload_benchmark(
         steam_app_id=steam_app_id,
         game_name=target_game["name"],
@@ -666,6 +671,8 @@ def benchmark(
             "cpu": system_info.get("cpu", {}).get("model", "Unknown"),
             "os": system_info.get("os", {}).get("name", "Linux"),
             "kernel": system_info.get("os", {}).get("kernel"),
+            "mesa": system_info.get("gpu", {}).get("driver_version"),
+            "vulkan": system_info.get("gpu", {}).get("vulkan_version"),
             "ram_gb": int(system_info.get("ram", {}).get("total_gb", 0)),
         },
         metrics={
@@ -676,6 +683,7 @@ def benchmark(
             "stutter_rating": stutter_rating,
             "consistency_rating": consistency_rating,
         },
+        frametimes=frametimes,
     )
 
     if result.success:

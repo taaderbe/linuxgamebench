@@ -175,9 +175,11 @@ def get_gpu_info() -> dict:
         elif glxinfo_model:
             info["model"] = glxinfo_model
     elif info["vendor"] == "AMD":
-        # For AMD: glxinfo gives full info with driver details
+        # For AMD: glxinfo gives full info but includes driver details in parentheses
+        # e.g. "AMD Radeon RX 7900 XTX (radeonsi, navi31, LLVM 21.1.6, DRM 3.64, 6.18.2-3-cachyos)"
+        # We want just "AMD Radeon RX 7900 XTX"
         if glxinfo_model:
-            info["model"] = glxinfo_model
+            info["model"] = glxinfo_model.split("(")[0].strip()
         elif lspci_model:
             info["model"] = lspci_model
     elif info["vendor"] == "NVIDIA":

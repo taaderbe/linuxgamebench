@@ -55,6 +55,7 @@ class BenchmarkAPIClient:
         resolution: str,
         system_info: Dict[str, Any],
         metrics: Dict[str, Any],
+        frametimes: Optional[list] = None,
     ) -> UploadResult:
         """
         Upload a benchmark result to the server.
@@ -103,6 +104,7 @@ class BenchmarkAPIClient:
                 "steam_name": session.steam_name or "",  # Must be string, not None
             },
             "client_version": settings.CLIENT_VERSION,
+            "frametimes": frametimes,
         }
 
         try:
@@ -202,6 +204,7 @@ def upload_benchmark(
     resolution: str,
     system_info: Dict[str, Any],
     metrics: Dict[str, Any],
+    frametimes: Optional[list] = None,
 ) -> UploadResult:
     """
     Upload a benchmark result.
@@ -215,6 +218,7 @@ def upload_benchmark(
         resolution=resolution,
         system_info=system_info,
         metrics=metrics,
+        frametimes=frametimes,
     )
 
 
