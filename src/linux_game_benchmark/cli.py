@@ -734,10 +734,10 @@ def benchmark(
     result = upload_benchmark(
         steam_app_id=steam_app_id,
         game_name=target_game["name"],
-        resolution=selected_resolution,
+        resolution=_format_resolution(selected_resolution),
         system_info={
-            "gpu": system_info.get("gpu", {}).get("model", "Unknown"),
-            "cpu": system_info.get("cpu", {}).get("model", "Unknown"),
+            "gpu": _short_gpu(system_info.get("gpu", {}).get("model")),
+            "cpu": _short_cpu(system_info.get("cpu", {}).get("model")),
             "os": system_info.get("os", {}).get("name", "Linux"),
             "kernel": system_info.get("os", {}).get("kernel"),
             "gpu_driver": system_info.get("gpu", {}).get("driver_version"),
