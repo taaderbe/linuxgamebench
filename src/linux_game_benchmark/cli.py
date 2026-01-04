@@ -10,6 +10,7 @@ Commands:
     lgb report     - Generate report from benchmark results
 """
 
+import re
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -18,6 +19,66 @@ from typing import Optional
 from pathlib import Path
 
 from linux_game_benchmark import __version__
+
+
+# Helper functions for normalizing hardware names before upload
+def _short_gpu(name: str) -> str:
+    """Shorten GPU name for consistent storage."""
+    if not name:
+        return "Unknown"
+    # AMD RX 7000/6000 series: "AMD Radeon RX 7900 XTX" → "RX 7900 XTX"
+    m = re.search(r'RX\s*(\d{4}\s*XT[Xi]?)', name, re.I)
+    if m:
+        return "RX " + m.group(1).replace('  ', ' ')
+    m = re.search(r'RX\s*(\d{3,4})', name, re.I)
+    if m:
+        return "RX " + m.group(1)
+    # NVIDIA: "NVIDIA GeForce RTX 4090" → "RTX 4090"
+    m = re.search(r'(RTX|GTX)\s*(\d{3,4}(\s*Ti)?(\s*Super)?)', name, re.I)
+    if m:
+        return f"{m.group(1).upper()} {m.group(2)}"
+    # Intel Arc: "Intel Arc A770" → "Arc A770"
+    m = re.search(r'Arc\s*(A\d{3,4})', name, re.I)
+    if m:
+        return "Arc " + m.group(1)
+    # Intel integrated: "Intel Iris Xe Graphics" → keep short
+    m = re.search(r'(Iris\s+\w+)', name, re.I)
+    if m:
+        return m.group(1)
+    # Fallback: truncate to 30 chars
+    return name[:30] if len(name) > 30 else name
+
+
+def _short_cpu(name: str) -> str:
+    """Shorten CPU name for consistent storage."""
+    if not name:
+        return "Unknown"
+    # AMD Ryzen: "AMD Ryzen 7 9800X3D 8-Core Processor" → "Ryzen 7 9800X3D"
+    m = re.search(r'Ryzen\s*(\d)\s*(\d{4}X3D|\d{4}X|\d{4})', name, re.I)
+    if m:
+        return f"Ryzen {m.group(1)} {m.group(2)}"
+    # Intel Core: "Intel Core i7-13700K" → "i7-13700K"
+    m = re.search(r'(i[3579]-\d{4,5}\w*)', name, re.I)
+    if m:
+        return m.group(1)
+    # Intel Core Ultra: "Intel Core Ultra 7 155H" → "Ultra 7 155H"
+    m = re.search(r'Ultra\s*(\d)\s*(\d{3}\w*)', name, re.I)
+    if m:
+        return f"Ultra {m.group(1)} {m.group(2)}"
+    # Fallback: truncate to 30 chars
+    return name[:30] if len(name) > 30 else name
+
+
+def _format_resolution(res: str) -> str:
+    """Convert resolution to standard format."""
+    mapping = {
+        '3840x2160': 'UHD',
+        '3440x1440': 'UWQHD',
+        '2560x1440': 'WQHD',
+        '1920x1080': 'FHD',
+        '1280x720': 'HD',
+    }
+    return mapping.get(res, res)
 
 app = typer.Typer(
     name="lgb",
@@ -1287,10 +1348,10 @@ def upload(
             result = upload_benchmark(
                 steam_app_id=game_id,
                 game_name=game_name,
-                resolution=resolution,
+                resolution=_format_resolution(resolution),
                 system_info={
-                    "gpu": system_info.get("gpu", {}).get("model", "Unknown"),
-                    "cpu": system_info.get("cpu", {}).get("model", "Unknown"),
+                    "gpu": _short_gpu(system_info.get("gpu", {}).get("model")),
+                    "cpu": _short_cpu(system_info.get("cpu", {}).get("model")),
                     "os": system_info.get("os", {}).get("name", "Linux"),
                     "kernel": system_info.get("os", {}).get("kernel"),
                     "gpu_driver": system_info.get("gpu", {}).get("driver_version"),
