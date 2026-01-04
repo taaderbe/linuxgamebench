@@ -527,6 +527,7 @@ def benchmark(
             metrics = analyzer.analyze()
             fps = metrics.get("fps", {})
             frame_pacing = metrics.get("frame_pacing", {})
+            stutter = metrics.get("stutter", {})
 
             # Calculate duration
             duration_sec = fps.get('duration_seconds', 0)
@@ -563,7 +564,7 @@ def benchmark(
                 comment = ""
 
             # 3. Save run locally
-            stutter_rating = frame_pacing.get("stutter_rating", "Unknown")
+            stutter_rating = stutter.get("stutter_rating", "Unknown")
             consistency_rating = frame_pacing.get("consistency_rating", "Unknown")
             storage.save_run(
                 game_id=steam_app_id,
