@@ -1293,6 +1293,8 @@ def upload(
                     "cpu": system_info.get("cpu", {}).get("model", "Unknown"),
                     "os": system_info.get("os", {}).get("name", "Linux"),
                     "kernel": system_info.get("os", {}).get("kernel"),
+                    "gpu_driver": system_info.get("gpu", {}).get("driver_version"),
+                    "vulkan": system_info.get("gpu", {}).get("vulkan_version"),
                     "ram_gb": int(system_info.get("ram", {}).get("total_gb", 0)),
                 },
                 metrics=metrics,
