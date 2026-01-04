@@ -17,7 +17,7 @@ class Settings:
     AUTH_FILE = CONFIG_DIR / "auth.json"
 
     # API settings
-    API_BASE_URL = os.environ.get("LGB_API_URL", "https://taaclan.duckdns.org/api/v1")
+    API_BASE_URL = os.environ.get("LGB_API_URL", "https://linuxgamebench.com/api/v1")
 
     # Client version
     CLIENT_VERSION = "0.1.0"
