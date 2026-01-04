@@ -526,6 +526,7 @@ def benchmark(
             analyzer = FrametimeAnalyzer(log_path)
             metrics = analyzer.analyze()
             fps = metrics.get("fps", {})
+            frame_pacing = metrics.get("frame_pacing", {})
 
             # Calculate duration
             duration_sec = fps.get('duration_seconds', 0)
@@ -536,26 +537,126 @@ def benchmark(
             console.print(f"\n  [bold]Recorded:[/bold] {minutes}m {seconds}s, {frames} frames")
             console.print(f"  [bold]AVG FPS:[/bold] {fps.get('average', 0):.1f}")
             console.print(f"  [bold]1% Low:[/bold] {fps.get('1_percent_low', 0):.1f}")
+            console.print(f"  [bold]0.1% Low:[/bold] {fps.get('0.1_percent_low', 0):.1f}")
 
-            # Store for later
+            # Get frametimes for upload
+            frametimes = analyzer.frametimes if hasattr(analyzer, 'frametimes') else None
+
+            # 1. Ask for resolution
+            console.print(f"\n[bold]Which resolution was used?[/bold]")
+            console.print("  [1] HD    (1280×720)")
+            console.print("  [2] FHD   (1920×1080)")
+            console.print("  [3] WQHD  (2560×1440)")
+            console.print("  [4] UWQHD (3440×1440)")
+            console.print("  [5] UHD   (3840×2160)")
+            try:
+                res_choice = typer.prompt("Resolution [1-5]", default="2").strip()
+            except:
+                res_choice = "2"
+            resolution_map = {"1": "1280x720", "2": "1920x1080", "3": "2560x1440", "4": "3440x1440", "5": "3840x2160"}
+            selected_resolution = resolution_map.get(res_choice, "1920x1080")
+
+            # 2. Ask for comment
+            try:
+                comment = typer.prompt("Comment (optional, Enter to skip)", default="").strip()
+            except:
+                comment = ""
+
+            # 3. Save run locally
+            stutter_rating = frame_pacing.get("stutter_rating", "Unknown")
+            consistency_rating = frame_pacing.get("consistency_rating", "Unknown")
+            storage.save_run(
+                game_id=steam_app_id,
+                resolution=selected_resolution,
+                metrics=metrics,
+                frametimes=frametimes,
+            )
+            console.print(f"[dim]Saved locally[/dim]")
+
+            # Store for reference
             recordings.append({
                 "metrics": metrics,
                 "log_path": log_path,
-                "frametimes": analyzer.frametimes if hasattr(analyzer, 'frametimes') else None,
+                "frametimes": frametimes,
+                "resolution": selected_resolution,
+                "comment": comment,
             })
+
+            # 4. Ask if user wants to upload
+            console.print(f"\n[bold]Upload to community database?[/bold]")
+            try:
+                upload_choice = typer.prompt("Upload? [Y/n]", default="y").strip().lower()
+            except:
+                upload_choice = "n"
+
+            if upload_choice in ["y", "yes", "j", "ja", ""]:
+                # Check login
+                if not is_logged_in():
+                    console.print("[yellow]Not logged in. Login required for upload.[/yellow]")
+                    try:
+                        login_choice = typer.prompt("Login now? [Y/n]", default="y").strip().lower()
+                    except:
+                        login_choice = "n"
+                    if login_choice in ["y", "yes", "j", "ja", ""]:
+                        session = login_steam()
+                        if not session:
+                            console.print("[red]Login failed. Skipping upload.[/red]")
+                        else:
+                            console.print(f"[green]✓ Logged in as {session.steam_id}[/green]")
+                    else:
+                        console.print("[dim]Skipping upload.[/dim]")
+
+                # Upload if logged in
+                if is_logged_in():
+                    console.print("[dim]Uploading...[/dim]")
+                    if check_api_status():
+                        result = upload_benchmark(
+                            steam_app_id=steam_app_id,
+                            game_name=target_game["name"],
+                            resolution=_format_resolution(selected_resolution),
+                            system_info={
+                                "gpu": _short_gpu(system_info.get("gpu", {}).get("model")),
+                                "cpu": _short_cpu(system_info.get("cpu", {}).get("model")),
+                                "os": system_info.get("os", {}).get("name", "Linux"),
+                                "kernel": system_info.get("os", {}).get("kernel"),
+                                "gpu_driver": system_info.get("gpu", {}).get("driver_version"),
+                                "vulkan": system_info.get("gpu", {}).get("vulkan_version"),
+                                "ram_gb": int(system_info.get("ram", {}).get("total_gb", 0)),
+                            },
+                            metrics={
+                                "fps_avg": fps.get('average', 0),
+                                "fps_min": fps.get('minimum', 0),
+                                "fps_1low": fps.get('1_percent_low', 0),
+                                "fps_01low": fps.get('0.1_percent_low', 0),
+                                "stutter_rating": stutter_rating,
+                                "consistency_rating": consistency_rating,
+                            },
+                            frametimes=frametimes,
+                            comment=comment if comment else None,
+                        )
+                        if result.success:
+                            console.print(f"[bold green]✓ Uploaded![/bold green]")
+                            if result.url:
+                                console.print(f"  {result.url}")
+                        else:
+                            console.print(f"[red]Upload failed: {result.error}[/red]")
+                    else:
+                        console.print("[red]Server unreachable. Use 'lgb upload' later.[/red]")
+            else:
+                console.print("[dim]Not uploaded.[/dim]")
 
         except Exception as e:
             console.print(f"[red]Analysis error: {e}[/red]")
             return True  # Continue session
 
-        # Ask to end session
-        console.print(f"\n[bold]End benchmark session?[/bold]")
+        # 5. Ask to continue or end
+        console.print(f"\n[bold]Continue recording or end session?[/bold]")
         try:
-            end_choice = typer.prompt("[Y/n]", default="n").strip().lower()
+            continue_choice = typer.prompt("[C]ontinue / [E]nd", default="c").strip().lower()
         except:
             return True
 
-        if end_choice in ["y", "yes", "j", "ja"]:
+        if continue_choice in ["e", "end", "q", "quit"]:
             return False  # End session
 
         console.print(f"\n[bold yellow]Waiting for next recording ([bold red]Shift+F2[/bold red])...[/bold yellow]")
@@ -608,160 +709,26 @@ def benchmark(
         except:
             pass
 
-    # End of session - process recordings
+    # End of session summary
     if not recordings:
         console.print("\n[yellow]No recordings captured.[/yellow]")
-        raise typer.Exit(0)
-
-    console.print(f"\n[bold cyan]═══ Session ended: {len(recordings)} recording(s) ═══[/bold cyan]")
-
-    # Ask for resolution
-    console.print(f"\n[bold]Which resolution was used?[/bold]")
-    console.print("  [1] HD    (1280×720)")
-    console.print("  [2] FHD   (1920×1080)")
-    console.print("  [3] WQHD  (2560×1440)")
-    console.print("  [4] UWQHD (3440×1440)")
-    console.print("  [5] UHD   (3840×2160)")
-    console.print("  [0] Discard all")
-
-    resolution_map = {"1": "1280x720", "2": "1920x1080", "3": "2560x1440", "4": "3440x1440", "5": "3840x2160"}
-    try:
-        res_choice = typer.prompt("Choice", default="2")
-    except:
-        raise typer.Exit(0)
-
-    if res_choice == "0":
-        console.print("[yellow]Recordings discarded.[/yellow]")
-        raise typer.Exit(0)
-
-    selected_resolution = resolution_map.get(res_choice, "1920x1080")
-
-    # Save all recordings
-    for rec in recordings:
-        storage.save_run(
-            game_id=steam_app_id,
-            resolution=selected_resolution,
-            metrics=rec["metrics"],
-            log_path=rec["log_path"],
-            frametimes=rec["frametimes"],
-        )
-
-    console.print(f"[green]✓ Saved {len(recordings)} recording(s) at {selected_resolution}[/green]")
-
-    # Generate report
-    all_resolutions = storage.get_all_resolutions(steam_app_id)
-    if all_resolutions:
-        resolution_data = {res: storage.aggregate_runs(runs) for res, runs in all_resolutions.items()}
-        report_path = storage.get_report_path(steam_app_id)
-        generate_multi_resolution_report(
-            game_name=target_game["name"],
-            app_id=steam_app_id,
-            system_info=system_info,
-            resolution_data=resolution_data,
-            output_path=report_path,
-            runs_data=all_resolutions,
-        )
-        console.print(f"[bold]Report:[/bold] {report_path}")
-
-    # Calculate aggregated metrics for upload
-    all_metrics = [rec["metrics"] for rec in recordings]
-    avg_fps = sum(m.get("fps", {}).get("average", 0) for m in all_metrics) / len(all_metrics)
-    avg_min = sum(m.get("fps", {}).get("minimum", 0) for m in all_metrics) / len(all_metrics)
-    avg_1low = sum(m.get("fps", {}).get("1_percent_low", 0) for m in all_metrics) / len(all_metrics)
-    avg_01low = sum(m.get("fps", {}).get("0.1_percent_low", 0) for m in all_metrics) / len(all_metrics)
-
-    # Get stutter and consistency ratings from last recording
-    last_metrics = all_metrics[-1] if all_metrics else {}
-    stutter_rating = last_metrics.get("stutter", {}).get("stutter_rating")
-    consistency_rating = last_metrics.get("frame_pacing", {}).get("consistency_rating")
-
-    # FPS Summary
-    console.print(f"\n[bold cyan]FPS Summary[/bold cyan]")
-    console.print(f"  Average:  {avg_fps:.1f} FPS")
-    console.print(f"  Minimum:  {avg_min:.1f} FPS")
-    console.print(f"  1% Low:   {avg_1low:.1f} FPS")
-    console.print(f"  0.1% Low: {avg_01low:.1f} FPS")
-
-    # Upload prompt
-    console.print(f"\n" + "─" * 50)
-    console.print("[bold]Upload to community database?[/bold]")
-
-    # Check login status
-    if not is_logged_in():
-        console.print("[dim]Not logged in. Login now to upload.[/dim]")
-        try:
-            login_choice = typer.prompt("Login with Steam? [Y/n]", default="y").strip().lower()
-        except:
-            raise typer.Exit(0)
-
-        if login_choice in ["y", "yes", "j", "ja", ""]:
-            session = login_with_steam(timeout=120)
-            if not session:
-                console.print("[red]Login failed.[/red]")
-                raise typer.Exit(0)
-            console.print(f"[green]✓ Logged in as {session.steam_id}[/green]")
-        else:
-            console.print("[dim]Not uploaded.[/dim]")
-            raise typer.Exit(0)
-
-    # Ask to upload
-    try:
-        upload_choice = typer.prompt("Upload? [Y/n]", default="y").strip().lower()
-    except:
-        raise typer.Exit(0)
-
-    if upload_choice not in ["y", "yes", "j", "ja", ""]:
-        console.print("[dim]Not uploaded.[/dim]")
-        raise typer.Exit(0)
-
-    # Optional comment
-    try:
-        comment = typer.prompt("Comment (optional, press Enter to skip)", default="").strip()
-    except:
-        comment = ""
-
-    # Check API and upload
-    console.print("[dim]Connecting...[/dim]")
-    if not check_api_status():
-        console.print("[red]Server unreachable. Try 'lgb upload' later.[/red]")
-        raise typer.Exit(0)
-
-    # Get frametimes from last recording
-    frametimes = None
-    if recordings and recordings[-1].get("frametimes"):
-        frametimes = recordings[-1]["frametimes"]
-
-    result = upload_benchmark(
-        steam_app_id=steam_app_id,
-        game_name=target_game["name"],
-        resolution=_format_resolution(selected_resolution),
-        system_info={
-            "gpu": _short_gpu(system_info.get("gpu", {}).get("model")),
-            "cpu": _short_cpu(system_info.get("cpu", {}).get("model")),
-            "os": system_info.get("os", {}).get("name", "Linux"),
-            "kernel": system_info.get("os", {}).get("kernel"),
-            "gpu_driver": system_info.get("gpu", {}).get("driver_version"),
-            "vulkan": system_info.get("gpu", {}).get("vulkan_version"),
-            "ram_gb": int(system_info.get("ram", {}).get("total_gb", 0)),
-        },
-        metrics={
-            "fps_avg": avg_fps,
-            "fps_min": avg_min,
-            "fps_1low": avg_1low,
-            "fps_01low": avg_01low,
-            "stutter_rating": stutter_rating,
-            "consistency_rating": consistency_rating,
-        },
-        frametimes=frametimes,
-        comment=comment if comment else None,
-    )
-
-    if result.success:
-        console.print(f"[bold green]✓ Uploaded![/bold green]")
-        if result.url:
-            console.print(f"  {result.url}")
     else:
-        console.print(f"[red]Upload failed: {result.error}[/red]")
+        console.print(f"\n[bold cyan]═══ Session ended: {len(recordings)} recording(s) processed ═══[/bold cyan]")
+
+        # Generate report
+        all_resolutions = storage.get_all_resolutions(steam_app_id)
+        if all_resolutions:
+            resolution_data = {res: storage.aggregate_runs(runs) for res, runs in all_resolutions.items()}
+            report_path = storage.get_report_path(steam_app_id)
+            generate_multi_resolution_report(
+                game_name=target_game["name"],
+                app_id=steam_app_id,
+                system_info=system_info,
+                resolution_data=resolution_data,
+                output_path=report_path,
+                runs_data=all_resolutions,
+            )
+            console.print(f"[bold]Report:[/bold] {report_path}")
 
 
 @app.command()
