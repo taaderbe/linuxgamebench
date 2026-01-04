@@ -556,14 +556,16 @@ def benchmark(
 
     # Ask for resolution
     console.print(f"\n[bold]Which resolution was used?[/bold]")
-    console.print("  [1] FHD  (1920×1080)")
-    console.print("  [2] WQHD (2560×1440)")
-    console.print("  [3] UHD  (3840×2160)")
+    console.print("  [1] HD    (1280×720)")
+    console.print("  [2] FHD   (1920×1080)")
+    console.print("  [3] WQHD  (2560×1440)")
+    console.print("  [4] UWQHD (3440×1440)")
+    console.print("  [5] UHD   (3840×2160)")
     console.print("  [0] Discard all")
 
-    resolution_map = {"1": "1920x1080", "2": "2560x1440", "3": "3840x2160"}
+    resolution_map = {"1": "1280x720", "2": "1920x1080", "3": "2560x1440", "4": "3440x1440", "5": "3840x2160"}
     try:
-        res_choice = typer.prompt("Choice", default="1")
+        res_choice = typer.prompt("Choice", default="2")
     except:
         raise typer.Exit(0)
 
@@ -946,15 +948,17 @@ def record(
 
         # Ask for resolution
         console.print(f"\n[bold]Resolution?[/bold]")
-        console.print("  [1] FHD (1920×1080)")
-        console.print("  [2] WQHD (2560×1440)")
-        console.print("  [3] UHD (3840×2160)")
+        console.print("  [1] HD    (1280×720)")
+        console.print("  [2] FHD   (1920×1080)")
+        console.print("  [3] WQHD  (2560×1440)")
+        console.print("  [4] UWQHD (3440×1440)")
+        console.print("  [5] UHD   (3840×2160)")
         console.print("  [0] Discard")
 
-        resolution_map = {"1": "1920x1080", "2": "2560x1440", "3": "3840x2160"}
+        resolution_map = {"1": "1280x720", "2": "1920x1080", "3": "2560x1440", "4": "3440x1440", "5": "3840x2160"}
 
         try:
-            choice = typer.prompt("Choice", default="1")
+            choice = typer.prompt("Choice", default="2")
         except:
             return False
 
@@ -1480,15 +1484,17 @@ def record_manual(
 
         # Ask for resolution
         console.print(f"\n[bold]Resolution?[/bold]")
-        console.print("  [1] FHD (1920×1080)")
-        console.print("  [2] WQHD (2560×1440)")
-        console.print("  [3] UHD (3840×2160)")
+        console.print("  [1] HD    (1280×720)")
+        console.print("  [2] FHD   (1920×1080)")
+        console.print("  [3] WQHD  (2560×1440)")
+        console.print("  [4] UWQHD (3440×1440)")
+        console.print("  [5] UHD   (3840×2160)")
         console.print("  [0] Discard")
 
-        resolution_map = {"1": "1920x1080", "2": "2560x1440", "3": "3840x2160"}
+        resolution_map = {"1": "1280x720", "2": "1920x1080", "3": "2560x1440", "4": "3440x1440", "5": "3840x2160"}
 
         try:
-            choice = typer.prompt("Choice", default="1")
+            choice = typer.prompt("Choice", default="2")
         except:
             return True
 
