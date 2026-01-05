@@ -115,13 +115,22 @@ def main(
     # Check for updates
     try:
         from linux_game_benchmark.api.client import check_for_updates
+        import subprocess
         new_version = check_for_updates()
         if new_version:
             console.print(
                 f"[yellow]Update available: v{new_version}[/yellow] "
                 f"[dim](current: v{__version__})[/dim]"
             )
-            console.print("[dim]Run: pipx upgrade linux-game-benchmark[/dim]\n")
+            if typer.confirm("Do you want to update now?", default=False):
+                console.print("[dim]Updating...[/dim]")
+                subprocess.run(["pipx", "uninstall", "linux-game-benchmark"], check=True)
+                subprocess.run(["pipx", "install", "git+https://github.com/taaderbe/linuxgamebench.git"], check=True)
+                console.print("[green]Update complete! Please restart lgb.[/green]")
+                raise typer.Exit()
+            console.print()
+    except typer.Exit:
+        raise
     except Exception:
         pass  # Silently ignore update check failures
 

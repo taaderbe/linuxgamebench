@@ -20,7 +20,7 @@ class Settings:
     API_BASE_URL = os.environ.get("LGB_API_URL", "https://linuxgamebench.com/api/v1")
 
     # Client version
-    CLIENT_VERSION = "0.1.11"
+    CLIENT_VERSION = "0.1.12"
 
     # Steam OpenID settings
     STEAM_OPENID_URL = "https://steamcommunity.com/openid/login"
