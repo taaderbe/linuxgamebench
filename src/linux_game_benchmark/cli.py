@@ -171,12 +171,6 @@ def scan(
 
 @app.command()
 def list_games(
-    with_benchmark: bool = typer.Option(
-        False,
-        "--with-benchmark",
-        "-b",
-        help="Only show games with builtin benchmarks",
-    ),
     proton_only: bool = typer.Option(
         False,
         "--proton",
@@ -207,8 +201,6 @@ def list_games(
         raise typer.Exit(1)
 
     # Apply filters
-    if with_benchmark:
-        games = [g for g in games if g.get("has_builtin_benchmark")]
     if proton_only:
         games = [g for g in games if g.get("requires_proton")]
     if native_only:
@@ -223,16 +215,13 @@ def list_games(
     table.add_column("App ID", style="cyan", justify="right")
     table.add_column("Name", style="white")
     table.add_column("Type", style="green")
-    table.add_column("Benchmark", style="yellow")
 
     for game in sorted(games, key=lambda x: x.get("name", "")):
         game_type = "Proton" if game.get("requires_proton") else "Native"
-        benchmark = "Yes" if game.get("has_builtin_benchmark") else "-"
         table.add_row(
             str(game.get("app_id", "?")),
             game.get("name", "Unknown"),
             game_type,
-            benchmark,
         )
 
     console.print(table)
@@ -441,8 +430,7 @@ def benchmark(
     from linux_game_benchmark.analysis.report_generator import generate_multi_resolution_report
     from linux_game_benchmark.system.hardware_info import get_system_info
     from linux_game_benchmark.steam.launch_options import set_launch_options, restore_launch_options
-    from linux_game_benchmark.api import is_logged_in, upload_benchmark, check_api_status
-    from linux_game_benchmark.api.auth import login_with_steam
+    from linux_game_benchmark.api import upload_benchmark, check_api_status
 
     # Check MangoHud
     mangohud_info = check_mangohud_installation()
@@ -611,58 +599,40 @@ def benchmark(
                 upload_choice = "n"
 
             if upload_choice in ["y", "yes", "j", "ja", ""]:
-                # Check login
-                if not is_logged_in():
-                    console.print("[yellow]Not logged in. Login required for upload.[/yellow]")
-                    try:
-                        login_choice = typer.prompt("Login now? [Y/n]", default="y").strip().lower()
-                    except:
-                        login_choice = "n"
-                    if login_choice in ["y", "yes", "j", "ja", ""]:
-                        session = login_steam()
-                        if not session:
-                            console.print("[red]Login failed. Skipping upload.[/red]")
-                        else:
-                            console.print(f"[green]✓ Logged in as {session.steam_id}[/green]")
+                console.print("[dim]Uploading...[/dim]")
+                if check_api_status():
+                    result = upload_benchmark(
+                        steam_app_id=steam_app_id,
+                        game_name=target_game["name"],
+                        resolution=_format_resolution(selected_resolution),
+                        system_info={
+                            "gpu": _short_gpu(system_info.get("gpu", {}).get("model")),
+                            "cpu": _short_cpu(system_info.get("cpu", {}).get("model")),
+                            "os": system_info.get("os", {}).get("name", "Linux"),
+                            "kernel": system_info.get("os", {}).get("kernel"),
+                            "gpu_driver": system_info.get("gpu", {}).get("driver_version"),
+                            "vulkan": system_info.get("gpu", {}).get("vulkan_version"),
+                            "ram_gb": int(system_info.get("ram", {}).get("total_gb", 0)),
+                        },
+                        metrics={
+                            "fps_avg": fps.get('average', 0),
+                            "fps_min": fps.get('minimum', 0),
+                            "fps_1low": fps.get('1_percent_low', 0),
+                            "fps_01low": fps.get('0.1_percent_low', 0),
+                            "stutter_rating": stutter_rating,
+                            "consistency_rating": consistency_rating,
+                        },
+                        frametimes=frametimes,
+                        comment=comment if comment else None,
+                    )
+                    if result.success:
+                        console.print(f"[bold green]✓ Uploaded![/bold green]")
+                        if result.url:
+                            console.print(f"  {result.url}")
                     else:
-                        console.print("[dim]Skipping upload.[/dim]")
-
-                # Upload if logged in
-                if is_logged_in():
-                    console.print("[dim]Uploading...[/dim]")
-                    if check_api_status():
-                        result = upload_benchmark(
-                            steam_app_id=steam_app_id,
-                            game_name=target_game["name"],
-                            resolution=_format_resolution(selected_resolution),
-                            system_info={
-                                "gpu": _short_gpu(system_info.get("gpu", {}).get("model")),
-                                "cpu": _short_cpu(system_info.get("cpu", {}).get("model")),
-                                "os": system_info.get("os", {}).get("name", "Linux"),
-                                "kernel": system_info.get("os", {}).get("kernel"),
-                                "gpu_driver": system_info.get("gpu", {}).get("driver_version"),
-                                "vulkan": system_info.get("gpu", {}).get("vulkan_version"),
-                                "ram_gb": int(system_info.get("ram", {}).get("total_gb", 0)),
-                            },
-                            metrics={
-                                "fps_avg": fps.get('average', 0),
-                                "fps_min": fps.get('minimum', 0),
-                                "fps_1low": fps.get('1_percent_low', 0),
-                                "fps_01low": fps.get('0.1_percent_low', 0),
-                                "stutter_rating": stutter_rating,
-                                "consistency_rating": consistency_rating,
-                            },
-                            frametimes=frametimes,
-                            comment=comment if comment else None,
-                        )
-                        if result.success:
-                            console.print(f"[bold green]✓ Uploaded![/bold green]")
-                            if result.url:
-                                console.print(f"  {result.url}")
-                        else:
-                            console.print(f"[red]Upload failed: {result.error}[/red]")
-                    else:
-                        console.print("[red]Server unreachable. Use 'lgb upload' later.[/red]")
+                        console.print(f"[red]Upload failed: {result.error}[/red]")
+                else:
+                    console.print("[red]Server unreachable. Use 'lgb upload' later.[/red]")
             else:
                 console.print("[dim]Not uploaded.[/dim]")
 
@@ -1104,89 +1074,6 @@ def record(
 
 
 @app.command()
-def login() -> None:
-    """
-    Login with Steam account.
-
-    Opens the browser for Steam OpenID login.
-    After login, benchmarks can be uploaded to the community database.
-    """
-    from linux_game_benchmark.api.auth import login_with_steam, get_current_session
-
-    # Check if already logged in
-    session = get_current_session()
-    if session:
-        console.print(f"[yellow]Already logged in as Steam ID: {session.steam_id}[/yellow]")
-        if session.steam_name:
-            console.print(f"[dim]Name: {session.steam_name}[/dim]")
-        console.print("\nTo logout: [cyan]lgb logout[/cyan]")
-        return
-
-    console.print("[bold]Steam Login[/bold]\n")
-
-    try:
-        session = login_with_steam(timeout=120)
-        if session:
-            console.print(f"\n[bold green]Login successful![/bold green]")
-            console.print(f"  Steam ID: {session.steam_id}")
-            if session.steam_name:
-                console.print(f"  Name: {session.steam_name}")
-            console.print("\n[dim]Your benchmarks can now be uploaded.[/dim]")
-        else:
-            console.print("\n[red]Login failed or cancelled.[/red]")
-            raise typer.Exit(1)
-    except Exception as e:
-        console.print(f"\n[red]Login error: {e}[/red]")
-        raise typer.Exit(1)
-
-
-@app.command()
-def logout() -> None:
-    """
-    Logout from Steam account.
-
-    Removes the stored login credentials.
-    """
-    from linux_game_benchmark.api.auth import logout as do_logout, get_current_session
-
-    session = get_current_session()
-    if not session:
-        console.print("[yellow]Not logged in.[/yellow]")
-        return
-
-    if do_logout():
-        console.print(f"[green]Successfully logged out.[/green]")
-        console.print(f"[dim]Steam ID {session.steam_id} removed.[/dim]")
-    else:
-        console.print("[yellow]Already logged out.[/yellow]")
-
-
-@app.command()
-def status() -> None:
-    """
-    Show current login status.
-
-    Shows if a Steam account is linked and other info.
-    """
-    from linux_game_benchmark.api.auth import get_current_session
-    from linux_game_benchmark.config.settings import settings
-
-    console.print("[bold]Account Status[/bold]\n")
-
-    session = get_current_session()
-    if session:
-        console.print(f"[green]Logged in[/green]")
-        console.print(f"  Steam ID: {session.steam_id}")
-        if session.steam_name:
-            console.print(f"  Name: {session.steam_name}")
-        console.print(f"  Since: {session.authenticated_at}")
-        console.print(f"\n[dim]Auth file: {settings.AUTH_FILE}[/dim]")
-    else:
-        console.print("[yellow]Not logged in[/yellow]")
-        console.print("\nTo login: [cyan]lgb login[/cyan]")
-
-
-@app.command()
 def upload(
     game: Optional[str] = typer.Argument(
         None,
@@ -1203,17 +1090,10 @@ def upload(
     Upload benchmark results to community database.
 
     Uploads saved benchmarks to the Linux Game Bench server.
-    Requires prior login with 'lgb login'.
     """
-    from linux_game_benchmark.api import upload_benchmark, is_logged_in, check_api_status
+    from linux_game_benchmark.api import upload_benchmark, check_api_status
     from linux_game_benchmark.benchmark.storage import BenchmarkStorage
     from linux_game_benchmark.system.hardware_info import get_system_info
-
-    # Check login
-    if not is_logged_in():
-        console.print("[red]Not logged in![/red]")
-        console.print("Please login first: [cyan]lgb login[/cyan]")
-        raise typer.Exit(1)
 
     # Check API
     console.print("[dim]Checking server connection...[/dim]")

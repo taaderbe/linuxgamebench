@@ -86,9 +86,6 @@ lgb list-games
 # Refresh game list (after installing new games)
 lgb scan
 
-# Filter: only games with builtin benchmarks
-lgb list-games --with-benchmark
-
 # Filter: only Proton/Windows games
 lgb list-games --proton
 
@@ -98,13 +95,13 @@ lgb list-games --native
 
 Example output:
 ```
-┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━┓
-┃ App ID   ┃ Name                        ┃ Type    ┃ Benchmark ┃
-┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━┩
-│ 1245620  │ Elden Ring                  │ Proton  │ -         │
-│ 1174180  │ Red Dead Redemption 2       │ Proton  │ Yes       │
-│ 427520   │ Factorio                    │ Native  │ -         │
-└──────────┴─────────────────────────────┴─────────┴───────────┘
+┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┓
+┃ App ID   ┃ Name                        ┃ Type    ┃
+┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━┩
+│ 1245620  │ Elden Ring                  │ Proton  │
+│ 1174180  │ Red Dead Redemption 2       │ Proton  │
+│ 427520   │ Factorio                    │ Native  │
+└──────────┴─────────────────────────────┴─────────┘
 ```
 
 ### 3. Start a Game Benchmark
@@ -157,9 +154,6 @@ xdg-open ~/benchmark_results/index.html
 | `lgb record [game]` | Auto-launch game and record |
 | `lgb analyze [log]` | Analyze MangoHud log |
 | `lgb report` | Regenerate HTML reports |
-| `lgb status` | Show login status |
-| `lgb login` | Login with Steam account |
-| `lgb logout` | Logout from Steam |
 | `lgb upload` | Upload benchmarks to community database |
 
 ## Metrics
@@ -210,22 +204,11 @@ echo "MANGOHUD=1" >> ~/.config/environment.d/mangohud.conf
 Share your benchmarks at **[linuxgamebench.com](https://linuxgamebench.com)** and compare your hardware with the community!
 
 ```bash
-# Link Steam account (required for upload)
-lgb login
-
-# Check login status
-lgb status
-
-# Benchmark will prompt for upload after recording
-lgb benchmark "Cyberpunk 2077"
-# → "Upload to community database? [Y/n]"
-
-# Or upload existing benchmarks
+# Upload existing benchmarks
 lgb upload
 ```
 
-> **Note:** Steam login is currently only used for uploading benchmarks.
-> User profiles and "My Benchmarks" features are planned for a future release.
+> **Note:** User profiles and "My Benchmarks" are planned for a future release.
 
 ## License
 

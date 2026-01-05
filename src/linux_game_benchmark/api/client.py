@@ -8,7 +8,6 @@ import httpx
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
 
-from linux_game_benchmark.api.auth import get_current_session, is_logged_in
 from linux_game_benchmark.config.settings import settings
 
 
@@ -36,17 +35,11 @@ class BenchmarkAPIClient:
         self.timeout = timeout
 
     def _get_headers(self) -> Dict[str, str]:
-        """Get request headers including Steam ID if logged in."""
-        headers = {
+        """Get request headers."""
+        return {
             "Content-Type": "application/json",
             "User-Agent": f"LinuxGameBench/{settings.CLIENT_VERSION}",
         }
-
-        session = get_current_session()
-        if session:
-            headers["X-Steam-ID"] = session.steam_id
-
-        return headers
 
     def upload_benchmark(
         self,
@@ -71,14 +64,6 @@ class BenchmarkAPIClient:
         Returns:
             UploadResult with success status and URL if successful.
         """
-        if not is_logged_in():
-            return UploadResult(
-                success=False,
-                error="Not logged in. Please run 'lgb login' first."
-            )
-
-        session = get_current_session()
-
         payload = {
             "steam_app_id": steam_app_id,
             "game_name": game_name,
@@ -99,10 +84,6 @@ class BenchmarkAPIClient:
                 "fps_01low": metrics.get("fps_01low") or metrics.get("0.1_percent_low", 0),
                 "stutter_rating": metrics.get("stutter_rating"),
                 "consistency_rating": metrics.get("consistency_rating"),
-            },
-            "submitter": {
-                "steam_id": session.steam_id,
-                "steam_name": session.steam_name or "",  # Must be string, not None
             },
             "client_version": settings.CLIENT_VERSION,
             "frametimes": frametimes,
