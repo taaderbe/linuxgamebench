@@ -613,11 +613,11 @@ class FrametimeAnalyzer:
 
         if is_likely_capped and fps_drop_percent < 15:
             # Capped games with stable 1% low get at least "Good"
-            if low_1_fps >= 55:  # ~60 FPS cap with stable lows
+            if low_1_fps >= 50:  # ~60 FPS cap with stable lows
                 return "Good"
-            elif low_1_fps >= 110:  # ~120 FPS cap with stable lows
+            elif low_1_fps >= 100:  # ~120 FPS cap with stable lows
                 return "Good"
-            elif low_1_fps >= 27:  # ~30 FPS cap with stable lows
+            elif low_1_fps >= 25:  # ~30 FPS cap with stable lows
                 return "Moderate"
 
         # High FPS range (1% low >= 120): Drops matter less due to high absolute values
