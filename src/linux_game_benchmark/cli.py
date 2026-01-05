@@ -82,6 +82,17 @@ def _short_kernel(kernel: str) -> str:
     return kernel
 
 
+def _normalize_resolution(res: str) -> str:
+    """Normalize resolution to pixel format."""
+    if not res:
+        return "1920x1080"
+    mapping = {
+        "HD": "1280x720", "FHD": "1920x1080",
+        "WQHD": "2560x1440", "UWQHD": "3440x1440", "UHD": "3840x2160"
+    }
+    return mapping.get(res.upper(), res)
+
+
 app = typer.Typer(
     name="lgb",
     help="Linux Game Benchmark - Automated gaming benchmark tool",
@@ -612,7 +623,7 @@ def benchmark(
                     result = upload_benchmark(
                         steam_app_id=steam_app_id,
                         game_name=target_game["name"],
-                        resolution=selected_resolution,
+                        resolution=_normalize_resolution(selected_resolution),
                         system_info={
                             "gpu": _short_gpu(system_info.get("gpu", {}).get("model")),
                             "cpu": _short_cpu(system_info.get("cpu", {}).get("model")),
@@ -912,7 +923,7 @@ def upload(
             result = upload_benchmark(
                 steam_app_id=game_id,
                 game_name=game_name,
-                resolution=resolution,
+                resolution=_normalize_resolution(resolution),
                 system_info={
                     "gpu": _short_gpu(system_info.get("gpu", {}).get("model")),
                     "cpu": _short_cpu(system_info.get("cpu", {}).get("model")),
