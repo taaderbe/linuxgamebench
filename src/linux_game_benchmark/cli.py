@@ -69,6 +69,19 @@ def _short_cpu(name: str) -> str:
     return name[:30] if len(name) > 30 else name
 
 
+def _short_kernel(kernel: str) -> str:
+    """Normalize kernel version - remove distro suffix."""
+    if not kernel:
+        return "Unknown"
+    # "6.18.3-2-MANJARO" → "6.18.3-2"
+    # "6.18.2-cachyos" → "6.18.2"
+    # "6.8.0-51-generic" → "6.8.0-51"
+    match = re.match(r'^(\d+\.\d+\.\d+(?:-\d+)?)', kernel)
+    if match:
+        return match.group(1)
+    return kernel
+
+
 app = typer.Typer(
     name="lgb",
     help="Linux Game Benchmark - Automated gaming benchmark tool",
@@ -604,7 +617,7 @@ def benchmark(
                             "gpu": _short_gpu(system_info.get("gpu", {}).get("model")),
                             "cpu": _short_cpu(system_info.get("cpu", {}).get("model")),
                             "os": system_info.get("os", {}).get("name", "Linux"),
-                            "kernel": system_info.get("os", {}).get("kernel"),
+                            "kernel": _short_kernel(system_info.get("os", {}).get("kernel")),
                             "gpu_driver": system_info.get("gpu", {}).get("driver_version"),
                             "vulkan": system_info.get("gpu", {}).get("vulkan_version"),
                             "ram_gb": int(system_info.get("ram", {}).get("total_gb", 0)),
@@ -904,7 +917,7 @@ def upload(
                     "gpu": _short_gpu(system_info.get("gpu", {}).get("model")),
                     "cpu": _short_cpu(system_info.get("cpu", {}).get("model")),
                     "os": system_info.get("os", {}).get("name", "Linux"),
-                    "kernel": system_info.get("os", {}).get("kernel"),
+                    "kernel": _short_kernel(system_info.get("os", {}).get("kernel")),
                     "gpu_driver": system_info.get("gpu", {}).get("driver_version"),
                     "vulkan": system_info.get("gpu", {}).get("vulkan_version"),
                     "ram_gb": int(system_info.get("ram", {}).get("total_gb", 0)),
