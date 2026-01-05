@@ -292,6 +292,62 @@ class BenchmarkRunner:
 
         return session
 
+    def _wait_for_log_completion(
+        self,
+        output_dir: Path,
+        timeout: float = 1800.0,
+    ) -> Optional[Path]:
+        """
+        Wait for MangoHud log file to appear and complete.
+
+        Args:
+            output_dir: Directory where logs are saved.
+            timeout: Maximum time to wait in seconds.
+
+        Returns:
+            Path to completed log file, or None if timeout.
+        """
+        start = time.time()
+        log_path = None
+        initial_logs = set(output_dir.glob("*.csv"))
+
+        self._log("Waiting for benchmark recording to start (Shift+F2)...")
+
+        # Wait for new .csv file to appear
+        while time.time() - start < timeout:
+            current_logs = set(output_dir.glob("*.csv"))
+            new_logs = current_logs - initial_logs
+
+            if new_logs:
+                log_path = max(new_logs, key=lambda p: p.stat().st_mtime)
+                self._log(f"Recording started: {log_path.name}")
+                break
+            time.sleep(1)
+
+        if not log_path:
+            return None
+
+        # Wait for file to stop growing (user pressed Shift+F2 to stop)
+        self._log("Recording in progress... Press Shift+F2 to stop when done.")
+        last_size = 0
+        stable_count = 0
+
+        while stable_count < 3 and (time.time() - start) < timeout:
+            try:
+                size = log_path.stat().st_size
+                if size == last_size and size > 0:
+                    stable_count += 1
+                else:
+                    stable_count = 0
+                last_size = size
+            except FileNotFoundError:
+                pass
+            time.sleep(1)
+
+        if stable_count >= 3:
+            self._log("Recording complete.")
+        return log_path
+
     def _run_single(
         self,
         config: BenchmarkConfig,
@@ -311,10 +367,8 @@ class BenchmarkRunner:
 
         success = self.launcher.launch(
             app_id=config.app_id,
-            launch_args=None,  # Args are set via Steam launch options now
+            launch_args=None,
             env=None,
-            wait_for_ready=True,
-            ready_timeout=120.0,
         )
 
         if not success:
@@ -322,40 +376,21 @@ class BenchmarkRunner:
             result.end_time = datetime.now()
             return result
 
-        self._log("Game started, recording...")
+        self._log("Game launch initiated.")
+        self._log("Start the game, then press Shift+F2 to begin recording.")
 
-        # Wait based on benchmark type
-        if config.benchmark_type == BenchmarkType.BUILTIN:
-            # Wait for game to exit (builtin benchmark runs and quits)
-            self._log("Waiting for builtin benchmark to complete...")
-            self.launcher.wait_for_exit(timeout=600.0)  # 10 min max
-
-        elif config.benchmark_type == BenchmarkType.MANUAL:
-            # User manually triggers benchmark, wait for game to exit
-            self._log("Manual mode: Start the benchmark in-game, then close the game when done.")
-            self._log("Waiting for game to exit...")
-            self.launcher.wait_for_exit(timeout=1800.0)  # 30 min max
-
-        elif config.benchmark_type == BenchmarkType.TIMED:
-            # Record for fixed duration, then wait for user to close game
-            self._log(f"Recording for {config.duration_seconds}s...")
-            time.sleep(config.duration_seconds)
-
-            # Don't kill the game - let user close it when ready
-            self._log("Recording complete. Close the game when ready...")
-            self.launcher.wait_for_exit(timeout=1800.0)  # 30 min max
+        # Wait for log file to be created and completed
+        log_path = self._wait_for_log_completion(output_dir, timeout=1800.0)
 
         result.end_time = datetime.now()
         result.duration_seconds = (result.end_time - result.start_time).total_seconds()
 
-        # Find and validate log
-        log_path = self.mangohud.find_latest_log(output_dir)
+        # Validate and analyze log
         if log_path:
             result.log_path = log_path
             validation = self.mangohud.validate_log(log_path)
 
             if validation["valid"]:
-                # Analyze the log
                 try:
                     analyzer = FrametimeAnalyzer(log_path)
                     result.metrics = analyzer.analyze()
@@ -365,7 +400,7 @@ class BenchmarkRunner:
             else:
                 result.error = f"Invalid log: {validation.get('error', 'Unknown')}"
         else:
-            result.error = "No log file found"
+            result.error = "No log file found - did you press Shift+F2?"
 
         return result
 

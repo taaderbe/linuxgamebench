@@ -670,21 +670,19 @@ def benchmark(
     try:
         success = launcher.launch(
             app_id=steam_app_id,
-            wait_for_ready=True,
-            ready_timeout=120.0,
-            verbose=True,
         )
 
         if not success:
-            console.print("[red]Timeout: Game process not detected[/red]")
+            console.print("[red]Failed to launch game[/red]")
             raise typer.Exit(1)
 
-        console.print(f"[green]Game running![/green]")
-        console.print(f"\n[bold yellow]Press [bold red]Shift+F2[/bold red] to start recording...[/bold yellow]\n")
+        console.print(f"[green]Game launch initiated![/green]")
+        console.print(f"\n[bold yellow]Start the game, then press [bold red]Shift+F2[/bold red] to start recording...[/bold yellow]")
+        console.print(f"[dim]Press Ctrl+C to end the session[/dim]\n")
 
-        # Monitor for recordings
+        # Monitor for recordings (no PID check - user ends session manually)
         session_active = True
-        while launcher.is_running() and session_active:
+        while session_active:
             new_logs = get_new_logs()
             for log_path in new_logs:
                 processed_logs.add(log_path.name)
@@ -693,13 +691,6 @@ def benchmark(
                     break
 
             time.sleep(1.0)
-
-        # Check for any final logs
-        time.sleep(2.0)
-        new_logs = get_new_logs()
-        for log_path in new_logs:
-            processed_logs.add(log_path.name)
-            process_recording(log_path)
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Cancelled[/yellow]")
@@ -1029,49 +1020,26 @@ def record(
 
     # Launch game
     console.print("[bold]Starting game...[/bold]")
-    console.print("[dim]Waiting for game process (max 120s)...[/dim]")
     launcher = GameLauncher()
 
     try:
         success = launcher.launch(
             app_id=target_game["app_id"],
-            wait_for_ready=True,
-            ready_timeout=120.0,
-            verbose=True,
         )
 
         if not success:
-            console.print("[red]Timeout: Game process not detected[/red]")
-            console.print("[yellow]Searching for running processes...[/yellow]")
-
-            # Show what processes we can see
-            import psutil
-            game_like = []
-            for proc in psutil.process_iter(["pid", "name", "memory_info"]):
-                try:
-                    name = proc.info.get("name", "")
-                    mem = proc.info.get("memory_info")
-                    if mem and mem.rss > 100 * 1024 * 1024:  # >100MB
-                        if "steam" not in name.lower() and "chrome" not in name.lower():
-                            game_like.append(f"{name} (PID {proc.info['pid']}, {mem.rss // (1024*1024)}MB)")
-                except:
-                    pass
-
-            if game_like:
-                console.print(f"[dim]Processes with >100MB RAM found:[/dim]")
-                for p in game_like[:10]:
-                    console.print(f"[dim]  - {p}[/dim]")
-
+            console.print("[red]Failed to launch game[/red]")
             raise typer.Exit(1)
 
-        console.print(f"[green]Game running! (PID: {launcher._game_pids})[/green]")
-        console.print(f"\n[bold yellow]Press [bold red]Shift+F2[/bold red] to start first recording...[/bold yellow]\n")
+        console.print(f"[green]Game launch initiated![/green]")
+        console.print(f"\n[bold yellow]Start the game, then press [bold red]Shift+F2[/bold red] to start recording...[/bold yellow]")
+        console.print(f"[dim]Press Ctrl+C to end the session[/dim]\n")
 
         # Manual stop flag
         user_requested_stop = False
 
-        # Monitor for logs while game is running
-        while launcher.is_running() and not user_requested_stop:
+        # Monitor for logs (user ends session with Ctrl+C or choosing "Finish")
+        while not user_requested_stop:
             new_logs = get_new_logs()
             for log_path in new_logs:
                 processed_logs.add(log_path.name)
@@ -1085,14 +1053,6 @@ def record(
         # Check if manually stopped
         if user_requested_stop:
             console.print("\n[bold cyan]═══ Finishing recording... ═══[/bold cyan]")
-
-        # Check for any remaining logs after game closes or manual stop
-        if not user_requested_stop:
-            time.sleep(2.0)
-            new_logs = get_new_logs()
-            for log_path in new_logs:
-                processed_logs.add(log_path.name)
-                process_log(log_path)
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Cancelled[/yellow]")

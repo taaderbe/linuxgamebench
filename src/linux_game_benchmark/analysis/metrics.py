@@ -385,13 +385,13 @@ class FrametimeAnalyzer:
     def _rate_stutter_index(self, si: float) -> str:
         """Rate stutter index (CV-based, legacy)."""
         if si < 5:
-            return "excellent"
+            return "Excellent"
         elif si < 10:
-            return "good"
+            return "Good"
         elif si < 20:
-            return "moderate"
+            return "Moderate"
         else:
-            return "poor"
+            return "Poor"
 
     def _rate_gameplay_stutter(
         self,
@@ -408,7 +408,7 @@ class FrametimeAnalyzer:
             total_frames: Total frames in the benchmark.
 
         Returns:
-            Rating: "excellent", "good", "moderate", or "poor".
+            Rating: "Excellent", "Good", "Moderate", or "Poor".
         """
         if total_frames == 0:
             return "unknown"
@@ -418,18 +418,18 @@ class FrametimeAnalyzer:
 
         # No real stutter events = excellent
         if gameplay_stutter_count == 0 and sequence_count == 0:
-            return "excellent"
+            return "Excellent"
 
         # Very few stutter events = good
         if stutter_per_1k < 0.5 and sequence_count <= 1:
-            return "good"
+            return "Good"
 
         # Some stutter events = moderate
         if stutter_per_1k < 2.0 and sequence_count <= 3:
-            return "moderate"
+            return "Moderate"
 
         # Many stutter events = poor
-        return "poor"
+        return "Poor"
 
     def _detect_stutter_sequences(self, threshold_ms: float = 33.0) -> list[dict]:
         """Detect sequences of consecutive slow frames."""
@@ -579,13 +579,13 @@ class FrametimeAnalyzer:
     def _rate_consistency(self, score: float) -> str:
         """Rate frame pacing consistency (legacy method)."""
         if score < 10:
-            return "excellent"
+            return "Excellent"
         elif score < 25:
-            return "good"
+            return "Good"
         elif score < 50:
-            return "moderate"
+            return "Moderate"
         else:
-            return "poor"
+            return "Poor"
 
     def _rate_frame_consistency(self, cv: float, avg_fps: float, low_1_fps: float) -> str:
         """
@@ -609,49 +609,49 @@ class FrametimeAnalyzer:
         # High FPS range (1% low >= 120): Drops matter less due to high absolute values
         if low_1_fps >= 120:
             if cv < 15 and fps_drop_percent < 40:
-                return "excellent"
+                return "Excellent"
             elif cv < 30 and fps_drop_percent < 60:
-                return "good"
+                return "Good"
             elif fps_drop_percent < 70:
-                return "moderate"
+                return "Moderate"
             else:
-                return "poor"
+                return "Poor"
 
         # Very smooth range (1% low >= 90): Still very playable
         elif low_1_fps >= 90:
             if cv < 12 and fps_drop_percent < 30:
-                return "excellent"
+                return "Excellent"
             elif cv < 25 and fps_drop_percent < 50:
-                return "good"
+                return "Good"
             elif fps_drop_percent < 65:
-                return "moderate"
+                return "Moderate"
             else:
-                return "poor"
+                return "Poor"
 
         # Smooth range (1% low >= 60): Acceptable for most games
         elif low_1_fps >= 60:
             if cv < 10 and fps_drop_percent < 20:
-                return "excellent"
+                return "Excellent"
             elif cv < 20 and fps_drop_percent < 35:
-                return "good"
+                return "Good"
             elif fps_drop_percent < 45:
-                return "moderate"
+                return "Moderate"
             else:
-                return "poor"
+                return "Poor"
 
         # Playable but stuttery (1% low >= 40): Noticeable but playable
         elif low_1_fps >= 40:
             if cv < 8 and fps_drop_percent < 15:
-                return "good"
+                return "Good"
             elif cv < 15 and fps_drop_percent < 30:
-                return "moderate"
+                return "Moderate"
             else:
-                return "poor"
+                return "Poor"
 
         # Critical range (1% low < 40): Significantly impacts experience
         else:
             # Below 40 FPS is always poor consistency
-            return "poor"
+            return "Poor"
 
     def analyze_hardware_usage(self) -> dict:
         """Analyze hardware metrics if available."""
@@ -784,20 +784,20 @@ class FrametimeAnalyzer:
 
         # Check stutter
         stutter_rating = stutter.get("stutter_rating", "")
-        if stutter_rating == "poor":
+        if stutter_rating.lower() == "poor":
             issues.append("heavy stutter")
-        elif stutter_rating == "moderate":
+        elif stutter_rating.lower() == "moderate":
             issues.append("noticeable stutter")
 
         # Determine overall rating
         if not issues:
-            overall = "excellent"
+            overall = "Excellent"
         elif len(issues) == 1 and "noticeable" in issues[0]:
-            overall = "good"
+            overall = "Good"
         elif len(issues) <= 2:
-            overall = "acceptable"
+            overall = "Acceptable"
         else:
-            overall = "poor"
+            overall = "Poor"
 
         return {
             "overall_rating": overall,
@@ -807,11 +807,11 @@ class FrametimeAnalyzer:
 
     def _describe_playability(self, avg_fps: float, stutter_rating: str) -> str:
         """Describe playability in human terms."""
-        if avg_fps >= 60 and stutter_rating in ("excellent", "good"):
+        if avg_fps >= 60 and stutter_rating.lower() in ("excellent", "good"):
             return "Smooth gameplay experience"
         elif avg_fps >= 60:
             return "Good FPS but occasional hitches"
-        elif avg_fps >= 30 and stutter_rating in ("excellent", "good"):
+        elif avg_fps >= 30 and stutter_rating.lower() in ("excellent", "good"):
             return "Playable, but would benefit from optimization"
         elif avg_fps >= 30:
             return "Playable but not optimal experience"
@@ -872,15 +872,15 @@ class FPSTargetEvaluator:
         min_1_low = target * 0.85  # 15% tolerance
 
         if low1 >= target:
-            rating = "excellent"
+            rating = "Excellent"
             icon = "OK"
             description = f"1% Low über {target} FPS"
         elif low1 >= min_1_low:
-            rating = "good"
+            rating = "Good"
             icon = "OK"
             description = f"1% Low bei {low1:.0f} FPS (>{min_1_low:.0f})"
         else:
-            rating = "not_recommended"
+            rating = "Not Recommended"
             icon = "X"
             description = f"1% Low zu niedrig ({low1:.0f} < {min_1_low:.0f})"
 
@@ -889,7 +889,7 @@ class FPSTargetEvaluator:
             "rating": rating,
             "icon": icon,
             "description": description,
-            "meets_target": rating in ("excellent", "good"),
+            "meets_target": rating in ("Excellent", "Good"),
         }
 
     def _get_recommended_target(self, evaluations: dict) -> dict:

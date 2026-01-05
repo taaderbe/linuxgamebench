@@ -79,14 +79,14 @@ This will:
 ### 2. List Steam Games
 
 ```bash
-lgb list
+lgb list-games
 ```
 
 ### 3. Start Benchmark
 
 ```bash
 # Interactive mode (recommended)
-lgb record_manual
+lgb record-manual
 ```
 
 **How record_manual works:**
@@ -107,10 +107,11 @@ xdg-open ~/benchmark_results/index.html
 | Command | Description |
 |---------|-------------|
 | `lgb check` | Check system requirements |
-| `lgb list` | Show installed Steam games |
+| `lgb list-games` | Show installed Steam games |
 | `lgb scan` | Scan Steam library |
 | `lgb info` | Show system information |
-| `lgb record_manual` | Manual recording mode (recommended) |
+| `lgb record-manual` | Manual recording mode (recommended) |
+| `lgb benchmark [game]` | Auto-launch game and benchmark |
 | `lgb record [game]` | Auto-launch game and record |
 | `lgb analyze [log]` | Analyze MangoHud log |
 | `lgb report` | Regenerate HTML reports |
