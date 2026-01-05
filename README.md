@@ -117,25 +117,14 @@ lgb benchmark 1245620
 lgb benchmark "Factorio" --duration 60
 ```
 
-### 4. Manual Recording (Recommended)
+**How it works:**
+1. lgb launches the game via Steam
+2. Press **Shift+F2** in-game to start recording
+3. Press **Shift+F2** again to stop (or wait for --duration)
+4. Select resolution and optionally upload to community database
+5. Repeat for more recordings or exit
 
-```bash
-# Interactive mode (recommended)
-lgb record-manual
-
-# With auto-stop after 90 seconds
-lgb record-manual --duration 90
-```
-
-**How record_manual works:**
-1. lgb configures MangoHud and waits
-2. Start your game with `MANGOHUD=1 %command%` in Steam launch options
-3. Press **Shift+F2** in-game to start recording
-4. Press **Shift+F2** again to stop (or wait for --duration)
-5. Return to terminal: enter game name and resolution
-6. Repeat for more recordings or exit
-
-### 5. View Report
+### 4. View Report
 
 ```bash
 xdg-open ~/benchmark_results/index.html
@@ -149,9 +138,8 @@ xdg-open ~/benchmark_results/index.html
 | `lgb list-games` | Show installed Steam games |
 | `lgb scan` | Scan Steam library |
 | `lgb info` | Show system information |
-| `lgb record-manual` | Manual recording mode (recommended) |
-| `lgb benchmark [game]` | Auto-launch game and benchmark |
-| `lgb record [game]` | Auto-launch game and record |
+| `lgb benchmark [game]` | Launch game and benchmark |
+| `lgb record [game]` | Launch game and record |
 | `lgb analyze [log]` | Analyze MangoHud log |
 | `lgb report` | Regenerate HTML reports |
 | `lgb upload` | Upload benchmarks to community database |
