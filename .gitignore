@@ -48,6 +48,7 @@ Keys_VM/
 # Session notes (internal)
 SESSION_NOTES.md
 PLAN.md
+SERVER.md
 
 # Playwright MCP
 .playwright-mcp/
