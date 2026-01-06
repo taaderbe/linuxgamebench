@@ -201,3 +201,33 @@ playwright show-trace test-results/trace.zip
 - Update tests when UI changes
 - Remove tests for removed features
 - Keep tests focused and independent
+
+---
+
+## Manual Testing - Auth & Email
+
+### Test-Szenarien
+
+#### 1. Account Registration
+- [ ] Email kommt an
+- [ ] Verification Link funktioniert
+- [ ] Account ist nach Verification aktiv
+
+#### 2. Password Reset
+- [ ] Reset-Email kommt an
+- [ ] Reset-Link funktioniert
+- [ ] Neues Passwort kann gesetzt werden
+- [ ] Alte Sessions werden invalidiert
+
+#### 3. Login Flow (CLI)
+- [ ] Login erfolgreich
+- [ ] Token wird gespeichert
+- [ ] `lgb status` zeigt korrekten User
+
+#### 4. Session Expiry
+- [ ] Nach Token-Ablauf wird Login angeboten
+- [ ] Upload funktioniert nach Re-Login
+
+### Test Account
+
+See `TESTING_SECRETS.md` (not in git) for test email credentials.

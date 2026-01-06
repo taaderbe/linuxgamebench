@@ -1,8 +1,8 @@
 """
-Tests for Steam authentication module.
+Tests for Email/JWT authentication module.
 
 Tests AuthSession serialization, file operations, and utility functions.
-Note: Actual Steam OpenID flow is not tested as it requires browser interaction.
+Note: Actual API login flow is not tested as it requires network.
 """
 
 import json
@@ -23,59 +23,100 @@ class TestAuthSession:
 
     def test_create_session(self):
         """Create a new AuthSession with required fields."""
-        session = AuthSession(steam_id="76561198012345678")
-        assert session.steam_id == "76561198012345678"
-        assert session.steam_name is None
+        session = AuthSession(
+            access_token="test_access_token",
+            refresh_token="test_refresh_token",
+            user={"id": 1, "email": "test@example.com", "username": "testuser"},
+        )
+        assert session.access_token == "test_access_token"
+        assert session.refresh_token == "test_refresh_token"
+        assert session.user["username"] == "testuser"
         assert session.authenticated_at != ""
 
-    def test_create_session_with_name(self):
-        """Create AuthSession with optional name."""
+    def test_create_session_with_stage(self):
+        """Create AuthSession with optional stage."""
         session = AuthSession(
-            steam_id="76561198012345678",
-            steam_name="TestUser",
+            access_token="test_access_token",
+            refresh_token="test_refresh_token",
+            user={"id": 1, "email": "test@example.com", "username": "testuser"},
+            stage="dev",
         )
-        assert session.steam_id == "76561198012345678"
-        assert session.steam_name == "TestUser"
+        assert session.stage == "dev"
 
     def test_to_dict(self):
         """AuthSession should serialize to dict."""
         session = AuthSession(
-            steam_id="76561198012345678",
-            steam_name="TestUser",
+            access_token="test_access_token",
+            refresh_token="test_refresh_token",
+            user={"id": 1, "email": "test@example.com", "username": "testuser"},
+            stage="prod",
             authenticated_at="2025-01-01T12:00:00",
         )
         data = session.to_dict()
 
-        assert data["steam_id"] == "76561198012345678"
-        assert data["steam_name"] == "TestUser"
+        assert data["access_token"] == "test_access_token"
+        assert data["refresh_token"] == "test_refresh_token"
+        assert data["user"]["username"] == "testuser"
+        assert data["stage"] == "prod"
         assert data["authenticated_at"] == "2025-01-01T12:00:00"
 
     def test_from_dict(self):
         """AuthSession should deserialize from dict."""
         data = {
-            "steam_id": "76561198012345678",
-            "steam_name": "TestUser",
+            "access_token": "test_access_token",
+            "refresh_token": "test_refresh_token",
+            "user": {"id": 1, "email": "test@example.com", "username": "testuser"},
+            "stage": "rc",
             "authenticated_at": "2025-01-01T12:00:00",
         }
         session = AuthSession.from_dict(data)
 
-        assert session.steam_id == "76561198012345678"
-        assert session.steam_name == "TestUser"
+        assert session.access_token == "test_access_token"
+        assert session.refresh_token == "test_refresh_token"
+        assert session.user["username"] == "testuser"
+        assert session.stage == "rc"
         assert session.authenticated_at == "2025-01-01T12:00:00"
 
     def test_from_dict_minimal(self):
-        """AuthSession should handle minimal dict."""
-        data = {"steam_id": "76561198012345678"}
+        """AuthSession should handle minimal dict with defaults."""
+        data = {
+            "access_token": "test_access_token",
+            "refresh_token": "test_refresh_token",
+        }
         session = AuthSession.from_dict(data)
 
-        assert session.steam_id == "76561198012345678"
-        assert session.steam_name is None
+        assert session.access_token == "test_access_token"
+        assert session.refresh_token == "test_refresh_token"
+        assert session.user == {}
+        assert session.stage == "prod"
 
     def test_authenticated_at_auto_set(self):
         """authenticated_at should be auto-set if not provided."""
-        session = AuthSession(steam_id="76561198012345678")
+        session = AuthSession(
+            access_token="test_access_token",
+            refresh_token="test_refresh_token",
+            user={},
+        )
         # Should be a valid ISO datetime
         datetime.fromisoformat(session.authenticated_at)
+
+    def test_get_username(self):
+        """get_username should return username from user dict."""
+        session = AuthSession(
+            access_token="test",
+            refresh_token="test",
+            user={"username": "testuser"},
+        )
+        assert session.get_username() == "testuser"
+
+    def test_get_email(self):
+        """get_email should return email from user dict."""
+        session = AuthSession(
+            access_token="test",
+            refresh_token="test",
+            user={"email": "test@example.com"},
+        )
+        assert session.get_email() == "test@example.com"
 
 
 class TestAuthSessionFileOperations:
@@ -86,8 +127,9 @@ class TestAuthSessionFileOperations:
         auth_file = tmp_path / "auth.json"
 
         session = AuthSession(
-            steam_id="76561198012345678",
-            steam_name="TestUser",
+            access_token="test_access_token",
+            refresh_token="test_refresh_token",
+            user={"id": 1, "username": "testuser", "email": "test@example.com"},
         )
         session.save(auth_file)
 
@@ -97,8 +139,9 @@ class TestAuthSessionFileOperations:
         # Load and verify
         loaded = AuthSession.load(auth_file)
         assert loaded is not None
-        assert loaded.steam_id == session.steam_id
-        assert loaded.steam_name == session.steam_name
+        assert loaded.access_token == session.access_token
+        assert loaded.refresh_token == session.refresh_token
+        assert loaded.user["username"] == "testuser"
 
     def test_load_nonexistent_file(self, tmp_path: Path):
         """Loading from nonexistent file should return None."""
@@ -115,9 +158,9 @@ class TestAuthSessionFileOperations:
         assert loaded is None
 
     def test_load_missing_required_fields(self, tmp_path: Path):
-        """Loading JSON without steam_id should return None."""
+        """Loading JSON without required fields should return None."""
         auth_file = tmp_path / "missing.json"
-        auth_file.write_text('{"steam_name": "TestUser"}')
+        auth_file.write_text('{"user": {"username": "test"}}')
 
         loaded = AuthSession.load(auth_file)
         assert loaded is None
@@ -127,8 +170,9 @@ class TestAuthSessionFileOperations:
         auth_file = tmp_path / "auth.json"
 
         session = AuthSession(
-            steam_id="76561198012345678",
-            steam_name="TestUser",
+            access_token="test_access_token",
+            refresh_token="test_refresh_token",
+            user={"username": "testuser"},
         )
         session.save(auth_file)
 
@@ -136,8 +180,9 @@ class TestAuthSessionFileOperations:
         with open(auth_file) as f:
             data = json.load(f)
 
-        assert data["steam_id"] == "76561198012345678"
-        assert data["steam_name"] == "TestUser"
+        assert data["access_token"] == "test_access_token"
+        assert data["refresh_token"] == "test_refresh_token"
+        assert data["user"]["username"] == "testuser"
 
 
 class TestUtilityFunctions:
@@ -145,87 +190,104 @@ class TestUtilityFunctions:
 
     def test_is_logged_in_no_file(self, tmp_path: Path, monkeypatch):
         """is_logged_in should return False when no auth file."""
-        from linux_game_benchmark.config.settings import Settings
+        from linux_game_benchmark.config.settings import settings
 
-        # Patch Settings class attribute
-        monkeypatch.setattr(Settings, "AUTH_FILE", tmp_path / "auth.json")
+        # Patch settings method
+        monkeypatch.setattr(settings, "get_auth_file", lambda: tmp_path / "auth.json")
 
         assert is_logged_in() is False
 
     def test_is_logged_in_with_file(self, tmp_path: Path, monkeypatch):
         """is_logged_in should return True when auth file exists."""
-        from linux_game_benchmark.config.settings import Settings
+        from linux_game_benchmark.config.settings import settings
 
         auth_file = tmp_path / "auth.json"
-        session = AuthSession(steam_id="76561198012345678")
+        session = AuthSession(
+            access_token="test_access_token",
+            refresh_token="test_refresh_token",
+            user={"username": "testuser"},
+        )
         session.save(auth_file)
 
-        monkeypatch.setattr(Settings, "AUTH_FILE", auth_file)
+        monkeypatch.setattr(settings, "get_auth_file", lambda: auth_file)
 
         assert is_logged_in() is True
 
     def test_get_current_session_no_file(self, tmp_path: Path, monkeypatch):
         """get_current_session should return None when no auth file."""
-        from linux_game_benchmark.config.settings import Settings
+        from linux_game_benchmark.config.settings import settings
 
-        monkeypatch.setattr(Settings, "AUTH_FILE", tmp_path / "auth.json")
+        monkeypatch.setattr(settings, "get_auth_file", lambda: tmp_path / "auth.json")
 
         assert get_current_session() is None
 
     def test_get_current_session_with_file(self, tmp_path: Path, monkeypatch):
         """get_current_session should return session when file exists."""
-        from linux_game_benchmark.config.settings import Settings
+        from linux_game_benchmark.config.settings import settings
 
         auth_file = tmp_path / "auth.json"
-        session = AuthSession(steam_id="76561198012345678", steam_name="TestUser")
+        session = AuthSession(
+            access_token="test_access_token",
+            refresh_token="test_refresh_token",
+            user={"username": "testuser"},
+        )
         session.save(auth_file)
 
-        monkeypatch.setattr(Settings, "AUTH_FILE", auth_file)
+        monkeypatch.setattr(settings, "get_auth_file", lambda: auth_file)
 
         loaded = get_current_session()
         assert loaded is not None
-        assert loaded.steam_id == "76561198012345678"
+        assert loaded.access_token == "test_access_token"
 
     def test_logout_removes_file(self, tmp_path: Path, monkeypatch):
         """logout should remove auth file."""
-        from linux_game_benchmark.config.settings import Settings
+        from linux_game_benchmark.config.settings import settings
 
         auth_file = tmp_path / "auth.json"
-        session = AuthSession(steam_id="76561198012345678")
+        session = AuthSession(
+            access_token="test_access_token",
+            refresh_token="test_refresh_token",
+            user={},
+        )
         session.save(auth_file)
 
-        monkeypatch.setattr(Settings, "AUTH_FILE", auth_file)
+        monkeypatch.setattr(settings, "get_auth_file", lambda: auth_file)
 
         assert auth_file.exists()
-        result = logout()
-        assert result is True
+        success, message = logout()
+        assert success is True
         assert not auth_file.exists()
 
     def test_logout_no_file(self, tmp_path: Path, monkeypatch):
         """logout should return False when not logged in."""
-        from linux_game_benchmark.config.settings import Settings
+        from linux_game_benchmark.config.settings import settings
 
-        monkeypatch.setattr(Settings, "AUTH_FILE", tmp_path / "auth.json")
+        monkeypatch.setattr(settings, "get_auth_file", lambda: tmp_path / "auth.json")
 
-        result = logout()
-        assert result is False
+        success, message = logout()
+        assert success is False
+        assert "Not logged in" in message
 
 
-class TestSteamIDFormat:
-    """Tests for Steam ID format validation."""
+class TestTokenFormat:
+    """Tests for token handling."""
 
-    def test_valid_steam_id_format(self):
-        """Valid Steam64 IDs should work."""
-        valid_ids = [
-            "76561198012345678",
-            "76561197960287930",  # Minimum valid
-            "76561199999999999",  # High number
-        ]
-        for steam_id in valid_ids:
-            session = AuthSession(steam_id=steam_id)
-            assert session.steam_id == steam_id
+    def test_access_token_stored(self):
+        """Access token should be stored correctly."""
+        token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test"
+        session = AuthSession(
+            access_token=token,
+            refresh_token="refresh",
+            user={},
+        )
+        assert session.access_token == token
 
-    def test_steam_id_length(self):
-        """Steam64 IDs should be 17 digits."""
-        session = AuthSession(steam_id="76561198012345678")
-        assert len(session.steam_id) == 17
+    def test_refresh_token_stored(self):
+        """Refresh token should be stored correctly."""
+        token = "refresh_token_value_here"
+        session = AuthSession(
+            access_token="access",
+            refresh_token=token,
+            user={},
+        )
+        assert session.refresh_token == token
