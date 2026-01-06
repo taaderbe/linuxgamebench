@@ -16,7 +16,7 @@ Measures FPS, stutter, frame pacing and more using MangoHud.
 
 ## Requirements
 
-- Linux (tested on Arch, Fedora, Ubuntu)
+- Linux (tested on Arch, Fedora, Ubuntu, openSUSE)
 - Steam installed
 - MangoHud installed
 - Python 3.10+
@@ -55,6 +55,16 @@ sudo dnf install mangohud gamemode gamescope
 
 # Install pipx
 sudo dnf install pipx
+
+# Install the tool
+pipx install git+https://github.com/taaderbe/linuxgamebench.git
+```
+
+### openSUSE Tumbleweed
+
+```bash
+# All packages available in main repo
+sudo zypper install mangohud mangoapp gamemode gamescope python313-pipx
 
 # Install the tool
 pipx install git+https://github.com/taaderbe/linuxgamebench.git
