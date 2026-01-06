@@ -149,6 +149,152 @@ def main(
 
 
 @app.command()
+def login(
+    email: Optional[str] = typer.Option(
+        None,
+        "--email",
+        "-e",
+        help="Email address",
+    ),
+) -> None:
+    """
+    Login to Linux Game Bench.
+
+    Authenticate with your email and password.
+    Register at https://linuxgamebench.com/register
+    """
+    from linux_game_benchmark.api.auth import login as auth_login, get_status
+    from linux_game_benchmark.config.settings import settings
+
+    # Show current stage
+    console.print(f"[dim]Server: {settings.API_BASE_URL}[/dim]\n")
+
+    # Get email if not provided
+    if not email:
+        email = typer.prompt("Email")
+
+    # Get password (hidden)
+    password = typer.prompt("Password", hide_input=True)
+
+    console.print("[dim]Logging in...[/dim]")
+
+    success, message = auth_login(email, password)
+
+    if success:
+        console.print(f"[bold green]{message}[/bold green]")
+        status = get_status()
+        if status.get("user", {}).get("email_verified") is False:
+            console.print("[yellow]Note: Your email is not verified yet.[/yellow]")
+    else:
+        console.print(f"[bold red]{message}[/bold red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def logout() -> None:
+    """
+    Logout from Linux Game Bench.
+
+    Clears stored authentication tokens.
+    """
+    from linux_game_benchmark.api.auth import logout as auth_logout
+
+    success, message = auth_logout()
+
+    if success:
+        console.print(f"[green]{message}[/green]")
+    else:
+        console.print(f"[yellow]{message}[/yellow]")
+
+
+@app.command()
+def status() -> None:
+    """
+    Show current login status.
+
+    Displays authenticated user and server information.
+    """
+    from linux_game_benchmark.api.auth import get_status
+    from linux_game_benchmark.config.settings import settings
+
+    status_info = get_status()
+
+    console.print("[bold]Linux Game Bench Status[/bold]\n")
+
+    # Server info
+    stage = status_info.get("stage", "prod")
+    stage_color = {"dev": "yellow", "rc": "cyan", "preprod": "blue", "prod": "green"}.get(stage, "white")
+    console.print(f"[bold]Stage:[/bold] [{stage_color}]{stage}[/{stage_color}]")
+    console.print(f"[bold]Server:[/bold] {status_info.get('api_url')}")
+
+    console.print()
+
+    # Auth status
+    if status_info.get("logged_in"):
+        # Verify token with server
+        from linux_game_benchmark.api.client import verify_auth
+        is_valid, msg = verify_auth()
+
+        if is_valid:
+            console.print(f"[bold green]Logged in[/bold green] [dim](token valid)[/dim]")
+            console.print(f"  [bold]Username:[/bold] {status_info.get('username')}")
+            console.print(f"  [bold]Email:[/bold] {status_info.get('email')}")
+
+            user = status_info.get("user", {})
+            if user.get("email_verified"):
+                console.print(f"  [bold]Verified:[/bold] [green]Yes[/green]")
+            else:
+                console.print(f"  [bold]Verified:[/bold] [yellow]No[/yellow]")
+        else:
+            console.print(f"[bold red]Session expired[/bold red]")
+            console.print(f"  [dim]{msg}[/dim]")
+            console.print(f"\n[yellow]Please login again: lgb login[/yellow]")
+    else:
+        console.print(f"[yellow]Not logged in[/yellow]")
+        console.print(f"\n[dim]Login with: lgb login[/dim]")
+        console.print(f"[dim]Register at: https://linuxgamebench.com/register[/dim]")
+
+
+@app.command()
+def config(
+    stage: Optional[str] = typer.Option(
+        None,
+        "--stage",
+        "-s",
+        help="Set server stage (dev, rc, preprod, prod)",
+    ),
+) -> None:
+    """
+    Configure client settings.
+
+    Set the server stage to use for all commands.
+    """
+    from linux_game_benchmark.config.settings import settings
+
+    if stage:
+        if stage not in settings.STAGES:
+            console.print(f"[red]Invalid stage: {stage}[/red]")
+            console.print(f"[dim]Valid stages: {', '.join(settings.STAGES.keys())}[/dim]")
+            raise typer.Exit(1)
+
+        if settings.set_stage(stage):
+            stage_color = {"dev": "yellow", "rc": "cyan", "preprod": "blue", "prod": "green"}.get(stage, "white")
+            console.print(f"[green]Stage set to:[/green] [{stage_color}]{stage}[/{stage_color}]")
+            console.print(f"[dim]Server: {settings.STAGES[stage]}[/dim]")
+        else:
+            console.print(f"[red]Failed to set stage[/red]")
+            raise typer.Exit(1)
+    else:
+        # Show current config
+        console.print("[bold]Current Configuration[/bold]\n")
+        stage = settings.CURRENT_STAGE
+        stage_color = {"dev": "yellow", "rc": "cyan", "preprod": "blue", "prod": "green"}.get(stage, "white")
+        console.print(f"[bold]Stage:[/bold] [{stage_color}]{stage}[/{stage_color}]")
+        console.print(f"[bold]Server:[/bold] {settings.API_BASE_URL}")
+        console.print(f"\n[dim]Change with: lgb config --stage dev[/dim]")
+
+
+@app.command()
 def scan(
     steam_path: Optional[Path] = typer.Option(
         None,
@@ -618,40 +764,115 @@ def benchmark(
                 upload_choice = "n"
 
             if upload_choice in ["y", "yes", "j", "ja", ""]:
-                console.print("[dim]Uploading...[/dim]")
-                if check_api_status():
-                    result = upload_benchmark(
-                        steam_app_id=steam_app_id,
-                        game_name=target_game["name"],
-                        resolution=_normalize_resolution(selected_resolution),
-                        system_info={
-                            "gpu": _short_gpu(system_info.get("gpu", {}).get("model")),
-                            "cpu": _short_cpu(system_info.get("cpu", {}).get("model")),
-                            "os": system_info.get("os", {}).get("name", "Linux"),
-                            "kernel": _short_kernel(system_info.get("os", {}).get("kernel")),
-                            "gpu_driver": system_info.get("gpu", {}).get("driver_version"),
-                            "vulkan": system_info.get("gpu", {}).get("vulkan_version"),
-                            "ram_gb": int(system_info.get("ram", {}).get("total_gb", 0)),
-                        },
-                        metrics={
-                            "fps_avg": fps.get('average', 0),
-                            "fps_min": fps.get('minimum', 0),
-                            "fps_1low": fps.get('1_percent_low', 0),
-                            "fps_01low": fps.get('0.1_percent_low', 0),
-                            "stutter_rating": stutter_rating,
-                            "consistency_rating": consistency_rating,
-                        },
-                        frametimes=frametimes,
-                        comment=comment if comment else None,
-                    )
-                    if result.success:
-                        console.print(f"[bold green]✓ Uploaded![/bold green]")
-                        if result.url:
-                            console.print(f"  {result.url}")
+                # Check login status before upload
+                from linux_game_benchmark.api.auth import get_auth_header, is_logged_in
+                can_upload = True
+                if not get_auth_header():
+                    console.print("[yellow]Not logged in or session expired.[/yellow]")
+                    login_choice = typer.prompt("Login now? [Y/n]", default="y").strip().lower()
+                    if login_choice in ["y", "yes", "j", "ja", ""]:
+                        # Prompt for login
+                        email = typer.prompt("Email")
+                        password = typer.prompt("Password", hide_input=True)
+                        from linux_game_benchmark.api.auth import login
+                        success, msg = login(email, password)
+                        if success:
+                            console.print(f"[green]✓ {msg}[/green]")
+                        else:
+                            console.print(f"[red]Login failed: {msg}[/red]")
+                            console.print("[dim]Benchmark saved locally. Use 'lgb upload' later.[/dim]")
+                            can_upload = False
                     else:
-                        console.print(f"[red]Upload failed: {result.error}[/red]")
-                else:
-                    console.print("[red]Server unreachable. Use 'lgb upload' later.[/red]")
+                        console.print("[dim]Upload skipped. Use 'lgb upload' after logging in.[/dim]")
+                        can_upload = False
+
+                if can_upload:
+                    console.print("[dim]Uploading...[/dim]")
+                    if check_api_status():
+                        result = upload_benchmark(
+                            steam_app_id=steam_app_id,
+                            game_name=target_game["name"],
+                            resolution=_normalize_resolution(selected_resolution),
+                            system_info={
+                                "gpu": _short_gpu(system_info.get("gpu", {}).get("model")),
+                                "cpu": _short_cpu(system_info.get("cpu", {}).get("model")),
+                                "os": system_info.get("os", {}).get("name", "Linux"),
+                                "kernel": _short_kernel(system_info.get("os", {}).get("kernel")),
+                                "gpu_driver": system_info.get("gpu", {}).get("driver_version"),
+                                "vulkan": system_info.get("gpu", {}).get("vulkan_version"),
+                                "ram_gb": int(system_info.get("ram", {}).get("total_gb", 0)),
+                            },
+                            metrics={
+                                "fps_avg": fps.get('average', 0),
+                                "fps_min": fps.get('minimum', 0),
+                                "fps_1low": fps.get('1_percent_low', 0),
+                                "fps_01low": fps.get('0.1_percent_low', 0),
+                                "stutter_rating": stutter_rating,
+                                "consistency_rating": consistency_rating,
+                                "duration_seconds": fps.get('duration_seconds', 0),
+                                "frame_count": fps.get('frame_count', 0),
+                            },
+                            frametimes=frametimes,
+                            comment=comment if comment else None,
+                        )
+                        if result.success:
+                            console.print(f"[bold green]✓ Uploaded![/bold green]")
+                            if result.url:
+                                console.print(f"  {result.url}")
+                        elif result.error and ("Authentication" in result.error or "Session expired" in result.error):
+                            # Auth failed - offer to login and retry
+                            console.print(f"[yellow]Session expired or invalid.[/yellow]")
+                            retry_login = typer.prompt("Login now and retry? [Y/n]", default="y").strip().lower()
+                            if retry_login in ["y", "yes", "j", "ja", ""]:
+                                email = typer.prompt("Email")
+                                password = typer.prompt("Password", hide_input=True)
+                                from linux_game_benchmark.api.auth import login as do_login
+                                login_ok, login_msg = do_login(email, password)
+                                if login_ok:
+                                    console.print(f"[green]✓ {login_msg}[/green]")
+                                    console.print("[dim]Retrying upload...[/dim]")
+                                    # Retry upload
+                                    retry_result = upload_benchmark(
+                                        steam_app_id=steam_app_id,
+                                        game_name=target_game["name"],
+                                        resolution=_normalize_resolution(selected_resolution),
+                                        system_info={
+                                            "gpu": _short_gpu(system_info.get("gpu", {}).get("model")),
+                                            "cpu": _short_cpu(system_info.get("cpu", {}).get("model")),
+                                            "os": system_info.get("os", {}).get("name", "Linux"),
+                                            "kernel": _short_kernel(system_info.get("os", {}).get("kernel")),
+                                            "gpu_driver": system_info.get("gpu", {}).get("driver_version"),
+                                            "vulkan": system_info.get("gpu", {}).get("vulkan_version"),
+                                            "ram_gb": int(system_info.get("ram", {}).get("total_gb", 0)),
+                                        },
+                                        metrics={
+                                            "fps_avg": fps.get('average', 0),
+                                            "fps_min": fps.get('minimum', 0),
+                                            "fps_1low": fps.get('1_percent_low', 0),
+                                            "fps_01low": fps.get('0.1_percent_low', 0),
+                                            "stutter_rating": stutter_rating,
+                                            "consistency_rating": consistency_rating,
+                                            "duration_seconds": fps.get('duration_seconds', 0),
+                                            "frame_count": fps.get('frame_count', 0),
+                                        },
+                                        frametimes=frametimes,
+                                        comment=comment if comment else None,
+                                    )
+                                    if retry_result.success:
+                                        console.print(f"[bold green]✓ Uploaded![/bold green]")
+                                        if retry_result.url:
+                                            console.print(f"  {retry_result.url}")
+                                    else:
+                                        console.print(f"[red]Upload failed: {retry_result.error}[/red]")
+                                else:
+                                    console.print(f"[red]Login failed: {login_msg}[/red]")
+                                    console.print("[dim]Benchmark saved locally. Use 'lgb upload' later.[/dim]")
+                            else:
+                                console.print("[dim]Upload skipped. Use 'lgb upload' after logging in.[/dim]")
+                        else:
+                            console.print(f"[red]Upload failed: {result.error}[/red]")
+                    else:
+                        console.print("[red]Server unreachable. Use 'lgb upload' later.[/red]")
             else:
                 console.print("[dim]Not uploaded.[/dim]")
 

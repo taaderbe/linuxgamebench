@@ -328,24 +328,62 @@ class BenchmarkRunner:
             return None
 
         # Wait for file to stop growing (user pressed Shift+F2 to stop)
-        self._log("Recording in progress... Press Shift+F2 to stop when done.")
+        # Show live timer while recording
+        recording_start = time.time()
         last_size = 0
         stable_count = 0
 
-        while stable_count < 3 and (time.time() - start) < timeout:
-            try:
-                size = log_path.stat().st_size
-                if size == last_size and size > 0:
-                    stable_count += 1
-                else:
-                    stable_count = 0
-                last_size = size
-            except FileNotFoundError:
-                pass
-            time.sleep(1)
+        try:
+            from rich.console import Console
+            from rich.live import Live
+            from rich.text import Text
+            console = Console()
+            use_rich = True
+        except ImportError:
+            use_rich = False
+            self._log("Recording in progress... Press Shift+F2 to stop when done.")
+
+        if use_rich:
+            with Live(console=console, refresh_per_second=1, transient=True) as live:
+                while stable_count < 3 and (time.time() - start) < timeout:
+                    elapsed = time.time() - recording_start
+                    mins = int(elapsed // 60)
+                    secs = int(elapsed % 60)
+
+                    status = Text()
+                    status.append("● RECORDING ", style="bold red")
+                    status.append(f"{mins:02d}:{secs:02d}", style="bold white")
+                    status.append(" - Press Shift+F2 to stop", style="dim")
+                    live.update(status)
+
+                    try:
+                        size = log_path.stat().st_size
+                        if size == last_size and size > 0:
+                            stable_count += 1
+                        else:
+                            stable_count = 0
+                        last_size = size
+                    except FileNotFoundError:
+                        pass
+                    time.sleep(1)
+        else:
+            while stable_count < 3 and (time.time() - start) < timeout:
+                try:
+                    size = log_path.stat().st_size
+                    if size == last_size and size > 0:
+                        stable_count += 1
+                    else:
+                        stable_count = 0
+                    last_size = size
+                except FileNotFoundError:
+                    pass
+                time.sleep(1)
 
         if stable_count >= 3:
-            self._log("Recording complete.")
+            elapsed = time.time() - recording_start
+            mins = int(elapsed // 60)
+            secs = int(elapsed % 60)
+            self._log(f"Recording complete. Duration: {mins:02d}:{secs:02d}")
         return log_path
 
     def _run_single(

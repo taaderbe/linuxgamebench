@@ -48,11 +48,52 @@ class BenchmarkAPIClient:
         self.timeout = timeout
 
     def _get_headers(self) -> Dict[str, str]:
-        """Get request headers."""
-        return {
+        """Get request headers including auth if logged in."""
+        from linux_game_benchmark.api.auth import get_auth_header
+
+        headers = {
             "Content-Type": "application/json",
             "User-Agent": f"LinuxGameBench/{settings.CLIENT_VERSION}",
         }
+
+        # Add auth header if logged in
+        auth_header = get_auth_header()
+        if auth_header:
+            headers.update(auth_header)
+
+        return headers
+
+    def verify_auth(self) -> tuple[bool, Optional[str]]:
+        """
+        Verify if current auth token is valid.
+
+        Returns:
+            Tuple of (is_valid, username or error message)
+        """
+        from linux_game_benchmark.api.auth import get_auth_header, is_logged_in
+
+        if not is_logged_in():
+            return False, "Not logged in"
+
+        auth_header = get_auth_header()
+        if not auth_header:
+            return False, "No auth token"
+
+        try:
+            with httpx.Client(timeout=5.0) as client:
+                response = client.get(
+                    f"{self.base_url}/auth/me",
+                    headers=auth_header,
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    return True, data.get("username", "Unknown")
+                elif response.status_code == 401:
+                    return False, "Session expired - please login again"
+                else:
+                    return False, f"Auth check failed ({response.status_code})"
+        except Exception as e:
+            return False, f"Could not verify auth: {e}"
 
     def upload_benchmark(
         self,
@@ -63,6 +104,7 @@ class BenchmarkAPIClient:
         metrics: Dict[str, Any],
         frametimes: Optional[list] = None,
         comment: Optional[str] = None,
+        require_auth: bool = True,
     ) -> UploadResult:
         """
         Upload a benchmark result to the server.
@@ -73,10 +115,22 @@ class BenchmarkAPIClient:
             resolution: Resolution used (e.g., "2560x1440").
             system_info: System information dict with gpu, cpu, os, etc.
             metrics: Performance metrics dict with fps_avg, fps_1low, etc.
+            require_auth: If True, verify auth before upload. Default True.
 
         Returns:
             UploadResult with success status and URL if successful.
         """
+        # Verify authentication before upload
+        if require_auth:
+            from linux_game_benchmark.api.auth import is_logged_in
+            if is_logged_in():
+                is_valid, msg = self.verify_auth()
+                if not is_valid:
+                    return UploadResult(
+                        success=False,
+                        error=f"Authentication invalid: {msg}. Run 'lgb login' to login again."
+                    )
+
         payload = {
             "steam_app_id": steam_app_id,
             "game_name": game_name,
@@ -97,6 +151,8 @@ class BenchmarkAPIClient:
                 "fps_01low": metrics.get("fps_01low") or metrics.get("0.1_percent_low", 0),
                 "stutter_rating": metrics.get("stutter_rating"),
                 "consistency_rating": metrics.get("consistency_rating"),
+                "duration_seconds": metrics.get("duration_seconds", 0),
+                "frame_count": metrics.get("frame_count", 0),
             },
             "client_version": settings.CLIENT_VERSION,
             "frametimes": frametimes,
@@ -248,3 +304,14 @@ def check_for_updates() -> Optional[str]:
     """Check if a newer client version is available."""
     client = BenchmarkAPIClient()
     return client.check_for_updates()
+
+
+def verify_auth() -> tuple[bool, Optional[str]]:
+    """
+    Verify if current auth token is valid.
+
+    Returns:
+        Tuple of (is_valid, username or error message)
+    """
+    client = BenchmarkAPIClient()
+    return client.verify_auth()
