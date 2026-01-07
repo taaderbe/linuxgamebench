@@ -168,7 +168,6 @@ xdg-open ~/benchmark_results/index.html
 | `lgb login` | Login to your account |
 | `lgb logout` | Logout from your account |
 | `lgb status` | Show login status and account info |
-| `lgb register` | Register a new account |
 
 ## Metrics
 
