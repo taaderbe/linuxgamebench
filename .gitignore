@@ -45,11 +45,8 @@ benchmark_results/
 # VM Keys (NEVER commit)
 Keys_VM/
 
-# Session notes (internal)
-SESSION_NOTES.md
-PLAN.md
-SERVER.md
-TESTING_SECRETS.md
+# Private docs moved to server repo
+# See: github.com/taaderbe/linuxgamebenchserver
 
 # Playwright MCP
 .playwright-mcp/
