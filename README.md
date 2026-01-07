@@ -165,6 +165,10 @@ xdg-open ~/benchmark_results/index.html
 | `lgb analyze [log]` | Analyze MangoHud log |
 | `lgb report` | Regenerate HTML reports |
 | `lgb upload` | Upload benchmarks to community database |
+| `lgb login` | Login to your account |
+| `lgb logout` | Logout from your account |
+| `lgb status` | Show login status and account info |
+| `lgb register` | Register a new account |
 
 ## Metrics
 
