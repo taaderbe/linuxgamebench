@@ -974,115 +974,49 @@ def benchmark(
                     upload_choice = default_upload
 
             if upload_choice in ["y", "yes", "j", "ja", ""] and can_upload:
-                # Check login status before upload
-                from linux_game_benchmark.api.auth import get_auth_header, is_logged_in
-                auth_ok = True
+                # Show login hint if not logged in (upload works without login)
+                from linux_game_benchmark.api.auth import get_auth_header
                 if not get_auth_header():
-                    console.print("[yellow]Not logged in or session expired.[/yellow]")
-                    login_choice = typer.prompt("Login now? [Y/n]", default="y").strip().lower()
-                    if login_choice in ["y", "yes", "j", "ja", ""]:
-                        # Prompt for login
-                        email = typer.prompt("Email")
-                        password = typer.prompt("Password", hide_input=True)
-                        from linux_game_benchmark.api.auth import login
-                        success, msg = login(email, password)
-                        if success:
-                            console.print(f"[green]✓ {msg}[/green]")
-                        else:
-                            console.print(f"[red]Login failed: {msg}[/red]")
-                            console.print("[dim]Benchmark saved locally.[/dim]")
-                            auth_ok = False
-                    else:
-                        console.print("[dim]Upload skipped. Please login with 'lgb login' first.[/dim]")
-                        auth_ok = False
+                    console.print("[dim]Tip: Login for extra features (track your benchmarks, better compare, edit settings)[/dim]")
+                    console.print("[dim]Register: https://linuxgamebench.com/register.html[/dim]")
 
-                if auth_ok:
-                    console.print("[dim]Uploading...[/dim]")
-                    if check_api_status():
-                        result = upload_benchmark(
-                            steam_app_id=steam_app_id,
-                            game_name=target_game["name"],
-                            resolution=_normalize_resolution(selected_resolution),
-                            system_info={
-                                "gpu": _short_gpu(system_info.get("gpu", {}).get("model")),
-                                "cpu": _short_cpu(system_info.get("cpu", {}).get("model")),
-                                "os": system_info.get("os", {}).get("name", "Linux"),
-                                "kernel": _short_kernel(system_info.get("os", {}).get("kernel")),
-                                "gpu_driver": system_info.get("gpu", {}).get("driver_version"),
-                                "vulkan": system_info.get("gpu", {}).get("vulkan_version"),
-                                "ram_gb": int(system_info.get("ram", {}).get("total_gb", 0)),
-                            },
-                            metrics={
-                                "fps_avg": fps.get('average', 0),
-                                "fps_min": fps.get('minimum', 0),
-                                "fps_1low": fps.get('1_percent_low', 0),
-                                "fps_01low": fps.get('0.1_percent_low', 0),
-                                "stutter_rating": stutter_rating,
-                                "consistency_rating": consistency_rating,
-                                "duration_seconds": fps.get('duration_seconds', 0),
-                                "frame_count": fps.get('frame_count', 0),
-                            },
-                            frametimes=frametimes,
-                            comment=comment if comment else None,
-                        )
-                        if result.success:
-                            console.print(f"[bold green]✓ Uploaded![/bold green]")
-                            if result.url:
-                                console.print(f"  {result.url}")
-                        elif result.error and ("Authentication" in result.error or "Session expired" in result.error):
-                            # Auth failed - offer to login and retry
-                            console.print(f"[yellow]Session expired or invalid.[/yellow]")
-                            retry_login = typer.prompt("Login now and retry? [Y/n]", default="y").strip().lower()
-                            if retry_login in ["y", "yes", "j", "ja", ""]:
-                                email = typer.prompt("Email")
-                                password = typer.prompt("Password", hide_input=True)
-                                from linux_game_benchmark.api.auth import login as do_login
-                                login_ok, login_msg = do_login(email, password)
-                                if login_ok:
-                                    console.print(f"[green]✓ {login_msg}[/green]")
-                                    console.print("[dim]Retrying upload...[/dim]")
-                                    # Retry upload
-                                    retry_result = upload_benchmark(
-                                        steam_app_id=steam_app_id,
-                                        game_name=target_game["name"],
-                                        resolution=_normalize_resolution(selected_resolution),
-                                        system_info={
-                                            "gpu": _short_gpu(system_info.get("gpu", {}).get("model")),
-                                            "cpu": _short_cpu(system_info.get("cpu", {}).get("model")),
-                                            "os": system_info.get("os", {}).get("name", "Linux"),
-                                            "kernel": _short_kernel(system_info.get("os", {}).get("kernel")),
-                                            "gpu_driver": system_info.get("gpu", {}).get("driver_version"),
-                                            "vulkan": system_info.get("gpu", {}).get("vulkan_version"),
-                                            "ram_gb": int(system_info.get("ram", {}).get("total_gb", 0)),
-                                        },
-                                        metrics={
-                                            "fps_avg": fps.get('average', 0),
-                                            "fps_min": fps.get('minimum', 0),
-                                            "fps_1low": fps.get('1_percent_low', 0),
-                                            "fps_01low": fps.get('0.1_percent_low', 0),
-                                            "stutter_rating": stutter_rating,
-                                            "consistency_rating": consistency_rating,
-                                            "duration_seconds": fps.get('duration_seconds', 0),
-                                            "frame_count": fps.get('frame_count', 0),
-                                        },
-                                        frametimes=frametimes,
-                                        comment=comment if comment else None,
-                                    )
-                                    if retry_result.success:
-                                        console.print(f"[bold green]✓ Uploaded![/bold green]")
-                                        if retry_result.url:
-                                            console.print(f"  {retry_result.url}")
-                                    else:
-                                        console.print(f"[red]Upload failed: {retry_result.error}[/red]")
-                                else:
-                                    console.print(f"[red]Login failed: {login_msg}[/red]")
-                                    console.print("[dim]Benchmark saved locally.[/dim]")
-                            else:
-                                console.print("[dim]Upload skipped. Please login with 'lgb login' first.[/dim]")
-                        else:
-                            console.print(f"[red]Upload failed: {result.error}[/red]")
+                # Upload (works with or without login)
+                console.print("[dim]Uploading...[/dim]")
+                if check_api_status():
+                    result = upload_benchmark(
+                        steam_app_id=steam_app_id,
+                        game_name=target_game["name"],
+                        resolution=_normalize_resolution(selected_resolution),
+                        system_info={
+                            "gpu": _short_gpu(system_info.get("gpu", {}).get("model")),
+                            "cpu": _short_cpu(system_info.get("cpu", {}).get("model")),
+                            "os": system_info.get("os", {}).get("name", "Linux"),
+                            "kernel": _short_kernel(system_info.get("os", {}).get("kernel")),
+                            "gpu_driver": system_info.get("gpu", {}).get("driver_version"),
+                            "vulkan": system_info.get("gpu", {}).get("vulkan_version"),
+                            "ram_gb": int(system_info.get("ram", {}).get("total_gb", 0)),
+                        },
+                        metrics={
+                            "fps_avg": fps.get('average', 0),
+                            "fps_min": fps.get('minimum', 0),
+                            "fps_1low": fps.get('1_percent_low', 0),
+                            "fps_01low": fps.get('0.1_percent_low', 0),
+                            "stutter_rating": stutter_rating,
+                            "consistency_rating": consistency_rating,
+                            "duration_seconds": fps.get('duration_seconds', 0),
+                            "frame_count": fps.get('frame_count', 0),
+                        },
+                        frametimes=frametimes,
+                        comment=comment if comment else None,
+                    )
+                    if result.success:
+                        console.print(f"[bold green]✓ Uploaded![/bold green]")
+                        if result.url:
+                            console.print(f"  {result.url}")
                     else:
-                        console.print("[red]Server unreachable. Please try again later.[/red]")
+                        console.print(f"[red]Upload failed: {result.error}[/red]")
+                else:
+                    console.print("[red]Server unreachable. Please try again later.[/red]")
             else:
                 console.print("[dim]Not uploaded.[/dim]")
 
