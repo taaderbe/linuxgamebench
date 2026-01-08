@@ -212,14 +212,16 @@ echo "MANGOHUD=1" >> ~/.config/environment.d/mangohud.conf
 
 Share your benchmarks at **[linuxgamebench.com](https://linuxgamebench.com)** and compare your hardware with the community!
 
-Benchmarks are automatically uploaded after each `lgb benchmark` run when you're logged in.
+Benchmarks are automatically uploaded after each `lgb benchmark` run. **No login required!**
 
 ```bash
-lgb login          # Login to your account
 lgb benchmark CS2  # Run benchmark - uploads automatically
 ```
 
-> **Note:** User profiles and "My Benchmarks" are planned for a future release.
+**Optional:** Create an account for extra features (track your benchmarks, better compare, edit settings):
+```bash
+lgb login          # Login to your account
+```
 
 ## Known Issues
 
