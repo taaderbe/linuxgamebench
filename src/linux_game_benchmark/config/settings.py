@@ -22,14 +22,14 @@ class Settings:
 
     # Stage configuration
     STAGES = {
-        "dev": "http://192.168.0.126:8000/api/v1",      # GameDEV
-        "rc": "http://192.168.0.70:8000/api/v1",        # Release Candidate
-        "preprod": "http://192.168.0.112:8000/api/v1", # Pre-Production
+        "dev": "http://192.168.0.126:8000/api/v1",      # GameDEV (direct)
+        "rc": "http://192.168.0.70/api/v1",             # Release Candidate (nginx)
+        "preprod": "http://192.168.0.112/api/v1",       # Pre-Production (nginx)
         "prod": "https://linuxgamebench.com/api/v1",    # Production
     }
 
     # Client version
-    CLIENT_VERSION = "0.1.23"
+    CLIENT_VERSION = "0.1.24"
 
     def _load_config(self) -> dict:
         """Load config from file."""

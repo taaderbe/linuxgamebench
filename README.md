@@ -161,7 +161,6 @@ xdg-open ~/benchmark_results/index.html
 | `lgb benchmark [game]` | Launch game and benchmark |
 | `lgb analyze [log]` | Analyze MangoHud log |
 | `lgb report` | Regenerate HTML reports |
-| `lgb upload` | Upload benchmarks to community database |
 | `lgb login` | Login to your account |
 | `lgb logout` | Logout from your account |
 | `lgb status` | Show login status and account info |
@@ -213,9 +212,11 @@ echo "MANGOHUD=1" >> ~/.config/environment.d/mangohud.conf
 
 Share your benchmarks at **[linuxgamebench.com](https://linuxgamebench.com)** and compare your hardware with the community!
 
+Benchmarks are automatically uploaded after each `lgb benchmark` run when you're logged in.
+
 ```bash
-# Upload existing benchmarks
-lgb upload
+lgb login          # Login to your account
+lgb benchmark CS2  # Run benchmark - uploads automatically
 ```
 
 > **Note:** User profiles and "My Benchmarks" are planned for a future release.

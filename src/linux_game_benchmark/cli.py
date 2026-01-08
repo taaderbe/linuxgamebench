@@ -109,6 +109,47 @@ def version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
+def require_latest_version() -> None:
+    """
+    Require latest client version for upload commands.
+
+    Checks server version and forces update if outdated.
+    Exits if user declines update.
+    """
+    import subprocess
+    from linux_game_benchmark.api.client import check_for_updates
+
+    try:
+        new_version = check_for_updates()
+        if new_version:
+            console.print(
+                f"\n[bold red]Update required![/bold red] "
+                f"v{new_version} available [dim](current: v{__version__})[/dim]"
+            )
+            console.print("[dim]Upload requires latest version for data quality.[/dim]\n")
+
+            if typer.confirm("Update now?", default=True):
+                console.print("[dim]Updating...[/dim]")
+                try:
+                    subprocess.run(["pipx", "uninstall", "linux-game-benchmark"], check=True)
+                    subprocess.run(["pipx", "install", "git+https://github.com/taaderbe/linuxgamebench.git"], check=True)
+                    console.print("[green]Update complete![/green]")
+                    console.print("[yellow]Please run the command again.[/yellow]")
+                except subprocess.CalledProcessError as e:
+                    console.print(f"[red]Update failed: {e}[/red]")
+                    console.print("[dim]Try manually: pipx upgrade linux-game-benchmark[/dim]")
+                raise typer.Exit(0)
+            else:
+                console.print("[red]Upload requires latest version. Exiting.[/red]")
+                raise typer.Exit(1)
+    except typer.Exit:
+        raise
+    except Exception:
+        # Can't check version (offline/server down)
+        # Continue anyway - upload will fail if server unreachable
+        pass
+
+
 @app.callback()
 def main(
     version: bool = typer.Option(
@@ -643,6 +684,9 @@ def benchmark(
     Starts the game and allows multiple benchmark recordings with Shift+F2.
     After each recording, you can choose to continue or end the session.
     """
+    # Require latest version for upload functionality
+    require_latest_version()
+
     import time
     from linux_game_benchmark.steam.library_scanner import SteamLibraryScanner
     from linux_game_benchmark.benchmark.game_launcher import GameLauncher
@@ -835,6 +879,19 @@ def benchmark(
             frame_pacing = metrics.get("frame_pacing", {})
             stutter = metrics.get("stutter", {})
 
+            # Get frametimes for validation and upload
+            frametimes = analyzer.frametimes if hasattr(analyzer, 'frametimes') else []
+
+            # === VALIDATION: Check if benchmark data is valid ===
+            from linux_game_benchmark.benchmark.validation import BenchmarkValidator
+            validator = BenchmarkValidator()
+            validation = validator.validate(
+                frametimes=frametimes,
+                fps_avg=fps.get('average'),
+                fps_min=fps.get('minimum'),
+                fps_max=fps.get('maximum'),
+            )
+
             # Calculate duration
             duration_sec = fps.get('duration_seconds', 0)
             minutes = int(duration_sec // 60)
@@ -846,8 +903,15 @@ def benchmark(
             console.print(f"  [bold]1% Low:[/bold] {fps.get('1_percent_low', 0):.1f}")
             console.print(f"  [bold]0.1% Low:[/bold] {fps.get('0.1_percent_low', 0):.1f}")
 
-            # Get frametimes for upload
-            frametimes = analyzer.frametimes if hasattr(analyzer, 'frametimes') else None
+            # Show validation status
+            can_upload = validation.valid
+            if validation.errors:
+                console.print(f"\n[bold red]✗ Benchmark invalid - upload blocked:[/bold red]")
+                for issue in validation.errors:
+                    console.print(f"  [red]• {issue.message}[/red]")
+            if validation.warnings:
+                for issue in validation.warnings:
+                    console.print(f"  [yellow]⚠ {issue.message}[/yellow]")
 
             # 1. Ask for resolution
             from linux_game_benchmark.config.preferences import preferences
@@ -894,21 +958,25 @@ def benchmark(
                 "comment": comment,
             })
 
-            # 4. Ask if user wants to upload
-            default_upload = preferences.upload
-            if default_upload == "y":
-                console.print(f"\n[bold]Upload to community database? [[green]Y[/green]/n][/bold]")
+            # 4. Ask if user wants to upload (only if validation passed)
+            if not can_upload:
+                console.print(f"\n[dim]Upload skipped due to validation errors.[/dim]")
+                upload_choice = "n"
             else:
-                console.print(f"\n[bold]Upload to community database? [Y/[green]n[/green]][/bold]")
-            try:
-                upload_choice = typer.prompt(f"Upload?", default=default_upload).strip().lower()
-            except:
-                upload_choice = default_upload
+                default_upload = preferences.upload
+                if default_upload == "y":
+                    console.print(f"\n[bold]Upload to community database? [[green]Y[/green]/n][/bold]")
+                else:
+                    console.print(f"\n[bold]Upload to community database? [Y/[green]n[/green]][/bold]")
+                try:
+                    upload_choice = typer.prompt(f"Upload?", default=default_upload).strip().lower()
+                except:
+                    upload_choice = default_upload
 
-            if upload_choice in ["y", "yes", "j", "ja", ""]:
+            if upload_choice in ["y", "yes", "j", "ja", ""] and can_upload:
                 # Check login status before upload
                 from linux_game_benchmark.api.auth import get_auth_header, is_logged_in
-                can_upload = True
+                auth_ok = True
                 if not get_auth_header():
                     console.print("[yellow]Not logged in or session expired.[/yellow]")
                     login_choice = typer.prompt("Login now? [Y/n]", default="y").strip().lower()
@@ -922,13 +990,13 @@ def benchmark(
                             console.print(f"[green]✓ {msg}[/green]")
                         else:
                             console.print(f"[red]Login failed: {msg}[/red]")
-                            console.print("[dim]Benchmark saved locally. Use 'lgb upload' later.[/dim]")
-                            can_upload = False
+                            console.print("[dim]Benchmark saved locally.[/dim]")
+                            auth_ok = False
                     else:
-                        console.print("[dim]Upload skipped. Use 'lgb upload' after logging in.[/dim]")
-                        can_upload = False
+                        console.print("[dim]Upload skipped. Please login with 'lgb login' first.[/dim]")
+                        auth_ok = False
 
-                if can_upload:
+                if auth_ok:
                     console.print("[dim]Uploading...[/dim]")
                     if check_api_status():
                         result = upload_benchmark(
@@ -1008,13 +1076,13 @@ def benchmark(
                                         console.print(f"[red]Upload failed: {retry_result.error}[/red]")
                                 else:
                                     console.print(f"[red]Login failed: {login_msg}[/red]")
-                                    console.print("[dim]Benchmark saved locally. Use 'lgb upload' later.[/dim]")
+                                    console.print("[dim]Benchmark saved locally.[/dim]")
                             else:
-                                console.print("[dim]Upload skipped. Use 'lgb upload' after logging in.[/dim]")
+                                console.print("[dim]Upload skipped. Please login with 'lgb login' first.[/dim]")
                         else:
                             console.print(f"[red]Upload failed: {result.error}[/red]")
                     else:
-                        console.print("[red]Server unreachable. Use 'lgb upload' later.[/red]")
+                        console.print("[red]Server unreachable. Please try again later.[/red]")
             else:
                 console.print("[dim]Not uploaded.[/dim]")
 
@@ -1194,133 +1262,6 @@ def report(
     console.print("[yellow]Report generation not yet implemented.[/yellow]")
 
 
-@app.command()
-def upload(
-    game: Optional[str] = typer.Argument(
-        None,
-        help="Game App ID or name to upload benchmarks for",
-    ),
-    all_games: bool = typer.Option(
-        False,
-        "--all",
-        "-a",
-        help="Upload benchmarks for all games",
-    ),
-) -> None:
-    """
-    Upload benchmark results to community database.
-
-    Uploads saved benchmarks to the Linux Game Bench server.
-    """
-    from linux_game_benchmark.api import upload_benchmark, check_api_status
-    from linux_game_benchmark.benchmark.storage import BenchmarkStorage
-    from linux_game_benchmark.system.hardware_info import get_system_info
-
-    # Check API
-    console.print("[dim]Checking server connection...[/dim]")
-    if not check_api_status():
-        console.print("[red]Server unreachable![/red]")
-        console.print("[dim]Please try again later.[/dim]")
-        raise typer.Exit(1)
-
-    console.print("[green]✓ Server reachable[/green]\n")
-
-    storage = BenchmarkStorage()
-    system_info = get_system_info()
-
-    # Get games to upload
-    if all_games:
-        games_to_upload = storage.get_all_games()
-    elif game:
-        # Find specific game
-        try:
-            app_id = int(game)
-            games_to_upload = [app_id]
-        except ValueError:
-            # Search by name
-            all_games_list = storage.get_all_games()
-            matching = [g for g in all_games_list if game.lower() in str(g).lower()]
-            if not matching:
-                console.print(f"[red]No game found: {game}[/red]")
-                raise typer.Exit(1)
-            games_to_upload = matching
-    else:
-        # Show available games
-        available = storage.get_all_games()
-        if not available:
-            console.print("[yellow]No benchmarks available.[/yellow]")
-            console.print("Create benchmarks first with: [cyan]lgb record <game>[/cyan]")
-            raise typer.Exit(0)
-
-        console.print("[bold]Available benchmarks:[/bold]")
-        for i, game_id in enumerate(available, 1):
-            resolutions = storage.get_all_resolutions(game_id)
-            res_str = ", ".join(resolutions.keys()) if resolutions else "none"
-            console.print(f"  [{i}] {game_id} ({res_str})")
-
-        console.print(f"\n[dim]Use 'lgb upload <app_id>' or 'lgb upload --all'[/dim]")
-        return
-
-    # Upload each game
-    uploaded = 0
-    failed = 0
-
-    for game_id in games_to_upload:
-        console.print(f"\n[bold cyan]Uploading: {game_id}[/bold cyan]")
-
-        resolutions = storage.get_all_resolutions(game_id)
-        if not resolutions:
-            console.print(f"  [yellow]No data for {game_id}[/yellow]")
-            continue
-
-        # Get game info for display name
-        game_dir = storage.base_dir / f"steam_{game_id}"
-        game_info_path = game_dir / "game_info.json"
-        game_name = str(game_id)
-
-        if game_info_path.exists():
-            import json
-            with open(game_info_path) as f:
-                info = json.load(f)
-                game_name = info.get("display_name", str(game_id))
-
-        for resolution, runs in resolutions.items():
-            if not runs:
-                continue
-
-            # Get aggregated metrics
-            metrics = storage.aggregate_runs(runs)
-
-            console.print(f"  {resolution}: ", end="")
-
-            result = upload_benchmark(
-                steam_app_id=game_id,
-                game_name=game_name,
-                resolution=_normalize_resolution(resolution),
-                system_info={
-                    "gpu": _short_gpu(system_info.get("gpu", {}).get("model")),
-                    "cpu": _short_cpu(system_info.get("cpu", {}).get("model")),
-                    "os": system_info.get("os", {}).get("name", "Linux"),
-                    "kernel": _short_kernel(system_info.get("os", {}).get("kernel")),
-                    "gpu_driver": system_info.get("gpu", {}).get("driver_version"),
-                    "vulkan": system_info.get("gpu", {}).get("vulkan_version"),
-                    "ram_gb": int(system_info.get("ram", {}).get("total_gb", 0)),
-                },
-                metrics=metrics,
-            )
-
-            if result.success:
-                console.print(f"[green]✓[/green] {result.url}")
-                uploaded += 1
-            else:
-                console.print(f"[red]✗[/red] {result.error}")
-                failed += 1
-
-    # Summary
-    console.print(f"\n[bold]Summary:[/bold]")
-    console.print(f"  Uploaded: [green]{uploaded}[/green]")
-    if failed:
-        console.print(f"  Failed: [red]{failed}[/red]")
 
 if __name__ == "__main__":
     app()

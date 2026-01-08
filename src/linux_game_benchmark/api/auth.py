@@ -288,7 +288,7 @@ class TokenManager:
             "user": session.user,
             "username": session.get_username(),
             "email": session.get_email(),
-            "stage": session.stage,
+            "stage": settings.CURRENT_STAGE,  # Always use current config, not login-time stage
             "api_url": self.base_url,
             "authenticated_at": session.authenticated_at,
         }
