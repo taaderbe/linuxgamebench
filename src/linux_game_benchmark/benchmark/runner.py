@@ -49,8 +49,6 @@ class BenchmarkConfig:
     warmup_runs: int = 1
     cooldown_seconds: int = 10
     proton_version: Optional[str] = None
-    use_gamescope: bool = False
-    gamescope_args: list[str] = field(default_factory=list)
     show_hud: bool = True
     manual_logging: bool = True  # User presses Shift+F2 to start/stop recording
     extra_env: dict[str, str] = field(default_factory=dict)
@@ -121,7 +119,6 @@ class BenchmarkRunner:
         requirements = {
             "mangohud": check_mangohud_installation(),
             "steam": {"installed": False, "path": None},
-            "gamescope": {"installed": False},
         }
 
         # Check Steam
@@ -131,10 +128,6 @@ class BenchmarkRunner:
             requirements["steam"]["path"] = str(launcher.steam_path)
         except FileNotFoundError:
             pass
-
-        # Check Gamescope
-        import shutil
-        requirements["gamescope"]["installed"] = shutil.which("gamescope") is not None
 
         return requirements
 
@@ -189,10 +182,7 @@ class BenchmarkRunner:
             self._log("Please set manually in Steam: MANGOHUD=1 %command%")
 
         # Initialize launcher
-        self.launcher = GameLauncher(
-            use_gamescope=config.use_gamescope,
-            gamescope_args=config.gamescope_args,
-        )
+        self.launcher = GameLauncher()
 
         # Calculate total runs
         total_runs = config.warmup_runs + config.runs

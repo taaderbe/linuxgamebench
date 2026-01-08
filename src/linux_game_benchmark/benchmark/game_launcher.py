@@ -17,20 +17,14 @@ class GameLauncher:
     def __init__(
         self,
         steam_path: Optional[Path] = None,
-        use_gamescope: bool = False,
-        gamescope_args: Optional[list[str]] = None,
     ):
         """
         Initialize game launcher.
 
         Args:
             steam_path: Path to Steam installation.
-            use_gamescope: Whether to wrap with Gamescope.
-            gamescope_args: Additional Gamescope arguments.
         """
         self.steam_path = steam_path or self._find_steam()
-        self.use_gamescope = use_gamescope
-        self.gamescope_args = gamescope_args or []
 
     def _find_steam(self) -> Path:
         """Find Steam executable."""
@@ -69,11 +63,6 @@ class GameLauncher:
             Command list to execute.
         """
         cmd = []
-
-        if self.use_gamescope:
-            cmd.extend(["gamescope"])
-            cmd.extend(self.gamescope_args)
-            cmd.append("--")
 
         if mangohud_config:
             cmd.extend(["mangohud", "--config", str(mangohud_config)])

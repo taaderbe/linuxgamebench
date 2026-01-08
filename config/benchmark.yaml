@@ -17,12 +17,6 @@ mangohud:
     - vram
     - ram
 
-# Gamescope settings (for resolution testing)
-gamescope:
-  enabled: false
-  upscaling: "fsr"  # fsr, nis, integer, none
-  upscale_sharpness: 5
-
 # Resolutions to test
 resolutions:
   - name: "720p"

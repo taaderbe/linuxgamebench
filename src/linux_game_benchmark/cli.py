@@ -295,6 +295,78 @@ def config(
 
 
 @app.command()
+def settings() -> None:
+    """
+    Configure default values for benchmark prompts.
+
+    Set default resolution, upload choice, and continue/end behavior.
+    """
+    from linux_game_benchmark.config.preferences import preferences
+
+    while True:
+        console.print("\n[bold]Current Settings[/bold]\n")
+
+        # Show current settings with defaults highlighted
+        res = preferences.resolution
+        res_name = preferences.get_resolution_name()
+        upload = preferences.upload.upper()
+        cont = preferences.continue_session.upper()
+
+        console.print(f"  [1] Default Resolution: [bold green]{res_name}[/bold green]")
+        console.print(f"  [2] Default Upload:     [bold green]{upload}[/bold green]")
+        console.print(f"  [3] Default Continue:   [bold green]{cont}[/bold green]")
+        console.print(f"  [4] Reset to defaults")
+        console.print(f"  [0] Back")
+
+        try:
+            choice = typer.prompt("\nSelect option", default="0").strip()
+        except:
+            break
+
+        if choice == "0":
+            break
+        elif choice == "1":
+            console.print("\n[bold]Select default resolution:[/bold]")
+            console.print("  [1] HD    (1280x720)")
+            console.print("  [2] FHD   (1920x1080)")
+            console.print("  [3] WQHD  (2560x1440)")
+            console.print("  [4] UWQHD (3440x1440)")
+            console.print("  [5] UHD   (3840x2160)")
+            try:
+                new_res = typer.prompt("Resolution [1-5]", default=res).strip()
+                if new_res in ("1", "2", "3", "4", "5"):
+                    preferences.resolution = new_res
+                    console.print(f"[green]Set to: {preferences.get_resolution_name()}[/green]")
+            except:
+                pass
+        elif choice == "2":
+            console.print("\n[bold]Default upload choice:[/bold]")
+            console.print("  [Y] Yes - upload by default")
+            console.print("  [N] No - don't upload by default")
+            try:
+                new_upload = typer.prompt("Upload [Y/N]", default=upload).strip().lower()
+                if new_upload in ("y", "n"):
+                    preferences.upload = new_upload
+                    console.print(f"[green]Set to: {new_upload.upper()}[/green]")
+            except:
+                pass
+        elif choice == "3":
+            console.print("\n[bold]After recording, default to:[/bold]")
+            console.print("  [C] Continue - record another benchmark")
+            console.print("  [E] End - finish session")
+            try:
+                new_cont = typer.prompt("Continue [C/E]", default=cont).strip().lower()
+                if new_cont in ("c", "e"):
+                    preferences.continue_session = new_cont
+                    console.print(f"[green]Set to: {new_cont.upper()}[/green]")
+            except:
+                pass
+        elif choice == "4":
+            preferences.reset()
+            console.print("[green]Reset to defaults[/green]")
+
+
+@app.command()
 def scan(
     steam_path: Optional[Path] = typer.Option(
         None,
@@ -427,7 +499,7 @@ def check() -> None:
     """
     Check system requirements for benchmarking.
 
-    Verifies MangoHud, Steam, Gamescope and other tools are available.
+    Verifies MangoHud, Steam and other tools are available.
     Automatically enables MangoHud globally if not configured.
     """
     from linux_game_benchmark.mangohud.manager import check_mangohud_installation
@@ -467,20 +539,6 @@ def check() -> None:
     else:
         console.print("[red]Steam:[/red] Not found in PATH")
         all_good = False
-
-    # Gamescope (optional)
-    gamescope_path = shutil.which("gamescope")
-    if gamescope_path:
-        console.print(f"[green]Gamescope:[/green] {gamescope_path}")
-    else:
-        console.print("[yellow]Gamescope:[/yellow] Not installed (optional)")
-
-    # GameMode (optional)
-    gamemode_path = shutil.which("gamemoderun")
-    if gamemode_path:
-        console.print(f"[green]GameMode:[/green] {gamemode_path}")
-    else:
-        console.print("[yellow]GameMode:[/yellow] Not installed (optional)")
 
     # Check for required tools
     for tool in ["lspci", "glxinfo", "vulkaninfo"]:
@@ -678,6 +736,7 @@ def benchmark(
             processed_logs.add(existing.name)
 
     recordings = []  # Store all recording data for final upload
+    active_recording = None  # Track currently recording file
 
     def get_new_logs():
         """Find new completed log files."""
@@ -690,6 +749,80 @@ def benchmark(
                 if size1 == size2 and size1 > 1000:
                     new_logs.append(log_file)
         return new_logs
+
+    def get_active_recording():
+        """Find actively growing log file (recording in progress)."""
+        for log_file in output_dir.glob("*.csv"):
+            if "_summary" not in log_file.name and log_file.name not in processed_logs:
+                size1 = log_file.stat().st_size
+                if size1 > 0:
+                    time.sleep(0.3)
+                    size2 = log_file.stat().st_size
+                    if size2 > size1:  # File is growing = active recording
+                        return log_file
+        return None
+
+    def monitor_recording(log_path: Path) -> None:
+        """Monitor active recording with live timer until complete."""
+        from rich.live import Live
+        from rich.text import Text
+        from linux_game_benchmark.benchmark.validation import BenchmarkValidator
+
+        console.print(f"\n[bold red]● Recording started![/bold red]")
+        start_time = time.time()
+        last_size = 0
+        stable_count = 0
+        MIN_DURATION = BenchmarkValidator.MIN_DURATION_SECONDS  # 30
+
+        with Live(console=console, refresh_per_second=4, transient=True) as live:
+            while stable_count < 1:  # Exit after first stable check
+                elapsed = time.time() - start_time
+
+                # Format timer
+                if elapsed < 60:
+                    timer_text = f"{int(elapsed)}sec"
+                else:
+                    mins = int(elapsed // 60)
+                    secs = int(elapsed % 60)
+                    timer_text = f"{mins}m {secs}sec"
+
+                # Color based on minimum duration
+                if elapsed < MIN_DURATION:
+                    remaining = int(MIN_DURATION - elapsed)
+                    style = "bold red"
+                    hint = f" (min {remaining}s)"
+                else:
+                    style = "bold green"
+                    hint = " ✓"
+
+                status = Text()
+                status.append("● RECORDING ", style="bold red")
+                status.append(timer_text, style=style)
+                status.append(hint, style="dim")
+                status.append(" - Shift+F2 to stop", style="dim")
+                live.update(status)
+
+                # Check if file stopped growing
+                try:
+                    size = log_path.stat().st_size
+                    if size == last_size and size > 0:
+                        stable_count += 1
+                    else:
+                        stable_count = 0
+                    last_size = size
+                except FileNotFoundError:
+                    break
+                time.sleep(0.25)  # Fast polling - MangoHud writes every frame
+
+        # Immediate feedback
+        elapsed = time.time() - start_time
+        if elapsed < 60:
+            timer_text = f"{int(elapsed)}sec"
+        else:
+            mins = int(elapsed // 60)
+            secs = int(elapsed % 60)
+            timer_text = f"{mins}m {secs}sec"
+        console.print(f"[bold cyan]■ Recording stopped[/bold cyan] ({timer_text})")
 
     def process_recording(log_path: Path) -> bool:
         """Process a recording. Returns False if user wants to end session."""
@@ -717,18 +850,23 @@ def benchmark(
             frametimes = analyzer.frametimes if hasattr(analyzer, 'frametimes') else None
 
             # 1. Ask for resolution
+            from linux_game_benchmark.config.preferences import preferences
+            default_res = preferences.resolution
+
             console.print(f"\n[bold]Which resolution was used?[/bold]")
-            console.print("  [1] HD    (1280×720)")
-            console.print("  [2] FHD   (1920×1080)")
-            console.print("  [3] WQHD  (2560×1440)")
-            console.print("  [4] UWQHD (3440×1440)")
-            console.print("  [5] UHD   (3840×2160)")
+            for key, label in [("1", "HD    (1280×720)"), ("2", "FHD   (1920×1080)"),
+                               ("3", "WQHD  (2560×1440)"), ("4", "UWQHD (3440×1440)"),
+                               ("5", "UHD   (3840×2160)")]:
+                if key == default_res:
+                    console.print(f"  [bold green][{key}] {label}[/bold green]")
+                else:
+                    console.print(f"  [{key}] {label}")
             try:
-                res_choice = typer.prompt("Resolution [1-5]", default="2").strip()
+                res_choice = typer.prompt(f"Resolution [1-5]", default=default_res).strip()
             except:
-                res_choice = "2"
+                res_choice = default_res
             resolution_map = {"1": "1280x720", "2": "1920x1080", "3": "2560x1440", "4": "3440x1440", "5": "3840x2160"}
-            selected_resolution = resolution_map.get(res_choice, "1920x1080")
+            selected_resolution = resolution_map.get(res_choice, resolution_map.get(default_res, "1920x1080"))
 
             # 2. Ask for comment
             try:
@@ -757,11 +895,15 @@ def benchmark(
             })
 
             # 4. Ask if user wants to upload
-            console.print(f"\n[bold]Upload to community database?[/bold]")
+            default_upload = preferences.upload
+            if default_upload == "y":
+                console.print(f"\n[bold]Upload to community database? [[green]Y[/green]/n][/bold]")
+            else:
+                console.print(f"\n[bold]Upload to community database? [Y/[green]n[/green]][/bold]")
             try:
-                upload_choice = typer.prompt("Upload? [Y/n]", default="y").strip().lower()
+                upload_choice = typer.prompt(f"Upload?", default=default_upload).strip().lower()
             except:
-                upload_choice = "n"
+                upload_choice = default_upload
 
             if upload_choice in ["y", "yes", "j", "ja", ""]:
                 # Check login status before upload
@@ -881,11 +1023,15 @@ def benchmark(
             return True  # Continue session
 
         # 5. Ask to continue or end
-        console.print(f"\n[bold]Continue recording or end session?[/bold]")
+        default_cont = preferences.continue_session
+        if default_cont == "c":
+            console.print(f"\n[bold][[green]C[/green]]ontinue / [E]nd[/bold]")
+        else:
+            console.print(f"\n[bold][C]ontinue / [[green]E[/green]]nd[/bold]")
         try:
-            continue_choice = typer.prompt("[C]ontinue / [E]nd", default="c").strip().lower()
+            continue_choice = typer.prompt(f"Choice", default=default_cont).strip().lower()
         except:
-            return True
+            return default_cont == "c"
 
         if continue_choice in ["e", "end", "q", "quit"]:
             return False  # End session
@@ -913,6 +1059,12 @@ def benchmark(
         # Monitor for recordings (no PID check - user ends session manually)
         session_active = True
         while session_active:
+            # First check for active recording (file growing)
+            active = get_active_recording()
+            if active and active.name not in processed_logs:
+                monitor_recording(active)  # Shows live timer until complete
+
+            # Then check for completed recordings
             new_logs = get_new_logs()
             for log_path in new_logs:
                 processed_logs.add(log_path.name)
@@ -920,7 +1072,7 @@ def benchmark(
                 if not session_active:
                     break
 
-            time.sleep(1.0)
+            time.sleep(0.5)
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Cancelled[/yellow]")

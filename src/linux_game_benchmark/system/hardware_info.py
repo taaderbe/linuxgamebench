@@ -401,14 +401,3 @@ def is_compositor_running() -> bool:
         return False
 
 
-def is_gamemode_active() -> bool:
-    """Check if Feral GameMode is active."""
-    try:
-        result = subprocess.run(
-            ["gamemoded", "-s"],
-            capture_output=True,
-            text=True,
-        )
-        return "active" in result.stdout.lower()
-    except Exception:
-        return False
