@@ -131,6 +131,22 @@ def _short_gpu(name: str) -> str:
     if "GT 1030" in name or "GT1030" in name:
         return "GT 1030"
 
+    # === NVIDIA MX Series (Mobile) ===
+    if "MX550" in name:
+        return "MX550"
+    if "MX450" in name:
+        return "MX450"
+    if "MX350" in name:
+        return "MX350"
+    if "MX250" in name:
+        return "MX250"
+    if "MX150" in name:
+        return "MX150"
+    if "MX130" in name:
+        return "MX130"
+    if "MX110" in name:
+        return "MX110"
+
     # === NVIDIA GTX 900 Series (Maxwell 2014-2015) ===
     if "980 Ti" in name:
         return "GTX 980 Ti"
@@ -1092,9 +1108,15 @@ def benchmark(
         gpu_pci_dev=gpu_pci,
     )
 
-    # Set Steam launch options
+    # Set Steam launch options with pci_dev for multi-GPU systems
     try:
-        set_launch_options(steam_app_id, "MANGOHUD=1 %command%")
+        if gpu_pci:
+            # Escape colons for MANGOHUD_CONFIG env var (required format)
+            pci_escaped = gpu_pci.replace(":", r"\:")
+            launch_opts = f'MANGOHUD=1 MANGOHUD_CONFIG="pci_dev={pci_escaped}" %command%'
+        else:
+            launch_opts = "MANGOHUD=1 %command%"
+        set_launch_options(steam_app_id, launch_opts)
     except Exception as e:
         console.print(f"[yellow]Warning: Could not set launch options: {e}[/yellow]")
 
