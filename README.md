@@ -3,6 +3,8 @@
 Automated benchmark tool for Steam games on Linux.
 Measures FPS, stutter, frame pacing and more using MangoHud.
 
+![Benchmark Results on linuxgamebench.com](docs/screenshot_website.png)
+
 ## Features
 
 - Automatic Steam game detection
@@ -62,7 +64,7 @@ pipx install git+https://github.com/taaderbe/linuxgamebench.git
 
 ```bash
 # All packages available in main repo
-sudo zypper install mangohud mangoapp python313-pipx
+sudo zypper install mangohud python313-pipx
 
 # Install the tool
 pipx install git+https://github.com/taaderbe/linuxgamebench.git
