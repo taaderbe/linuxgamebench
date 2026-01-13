@@ -15,7 +15,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
-from typing import Optional
+from typing import Dict, Optional
 from pathlib import Path
 
 from linux_game_benchmark import __version__
@@ -339,6 +339,15 @@ def _short_kernel(kernel: str) -> str:
     if match:
         return match.group(1)
     return kernel
+
+
+def _short_os(os_name: str) -> str:
+    """Normalize OS name - remove desktop environment suffix."""
+    if not os_name:
+        return "Unknown"
+    # "CachyOS Linux (KDE Plasma)" → "CachyOS Linux"
+    # "Fedora Linux 40 (Workstation Edition)" → "Fedora Linux 40"
+    return re.sub(r'\s*\([^)]+\)\s*$', '', os_name).strip()
 
 
 def _normalize_resolution(res: str) -> str:
@@ -1013,6 +1022,63 @@ def benchmark(
         "-d",
         help="Recording duration in seconds (max 300 = 5 min)",
     ),
+    resolution: Optional[str] = typer.Option(
+        None, "--resolution", "-r",
+        help="Resolution (HD/FHD/WQHD/UWQHD/UHD or 1920x1080 format). Skip interactive prompt.",
+    ),
+    # Game Settings (all optional)
+    preset: Optional[str] = typer.Option(
+        None, "--preset",
+        help="Graphics preset (low/medium/high/ultra/custom)",
+    ),
+    raytracing: Optional[str] = typer.Option(
+        None, "--raytracing",
+        help="Ray tracing (off/low/medium/high/ultra/pathtracing)",
+    ),
+    upscaling: Optional[str] = typer.Option(
+        None, "--upscaling",
+        help="Upscaling (none/fsr1/fsr2/fsr3/fsr4/dlss2/dlss3/dlss3.5/dlss4/dlss4.5/xess1/xess2)",
+    ),
+    upscaling_quality: Optional[str] = typer.Option(
+        None, "--upscaling-quality",
+        help="Upscaling quality (performance/balanced/quality/ultra-quality)",
+    ),
+    framegen: Optional[str] = typer.Option(
+        None, "--framegen",
+        help="Frame generation (off/fsr3-fg/dlss3-fg/afmf/afmf2)",
+    ),
+    aa: Optional[str] = typer.Option(
+        None, "--aa",
+        help="Anti-aliasing (none/fxaa/smaa/taa/dlaa)",
+    ),
+    hdr: Optional[str] = typer.Option(
+        None, "--hdr",
+        help="HDR (on/off)",
+    ),
+    vsync: Optional[str] = typer.Option(
+        None, "--vsync",
+        help="VSync (on/off)",
+    ),
+    framelimit: Optional[str] = typer.Option(
+        None, "--framelimit",
+        help="Frame limit (none/30/60/120/144/165/180/240)",
+    ),
+    cpu_oc: Optional[str] = typer.Option(
+        None, "--cpu-oc",
+        help="CPU overclock (yes/no)",
+    ),
+    cpu_oc_info: Optional[str] = typer.Option(
+        None, "--cpu-oc-info",
+        help="CPU OC details (e.g. '5.0GHz')",
+    ),
+    gpu_oc: Optional[str] = typer.Option(
+        None, "--gpu-oc",
+        help="GPU overclock (yes/no)",
+    ),
+    gpu_oc_info: Optional[str] = typer.Option(
+        None, "--gpu-oc-info",
+        help="GPU OC details (e.g. '+150core +100mem')",
+    ),
 ) -> None:
     """
     Run benchmark for a game.
@@ -1020,6 +1086,35 @@ def benchmark(
     Starts the game and allows multiple benchmark recordings with Shift+F2.
     After each recording, you can choose to continue or end the session.
     """
+    # Build game_settings dict from CLI parameters (once, at start)
+    game_settings: Dict[str, str] = {}
+    if preset:
+        game_settings['game_preset'] = preset
+    if raytracing:
+        game_settings['ray_tracing'] = raytracing
+    if upscaling:
+        game_settings['upscaling'] = upscaling
+    if upscaling_quality:
+        game_settings['upscaling_quality'] = upscaling_quality
+    if framegen:
+        game_settings['frame_generation'] = framegen
+    if aa:
+        game_settings['anti_aliasing'] = aa
+    if hdr:
+        game_settings['hdr'] = hdr
+    if vsync:
+        game_settings['vsync'] = vsync
+    if framelimit:
+        game_settings['frame_limit'] = framelimit
+    if cpu_oc:
+        game_settings['cpu_overclock'] = cpu_oc
+    if cpu_oc_info:
+        game_settings['cpu_overclock_info'] = cpu_oc_info
+    if gpu_oc:
+        game_settings['gpu_overclock'] = gpu_oc
+    if gpu_oc_info:
+        game_settings['gpu_overclock_info'] = gpu_oc_info
+
     # Require latest version for upload functionality
     require_latest_version()
 
@@ -1288,24 +1383,42 @@ def benchmark(
                 for issue in validation.warnings:
                     console.print(f"  [yellow]⚠ {issue.message}[/yellow]")
 
-            # 1. Ask for resolution
+            # 1. Resolution (CLI param or interactive prompt)
             from linux_game_benchmark.config.preferences import preferences
             default_res = preferences.resolution
 
-            console.print(f"\n[bold]Which resolution was used?[/bold]")
-            for key, label in [("1", "HD    (1280×720)"), ("2", "FHD   (1920×1080)"),
-                               ("3", "WQHD  (2560×1440)"), ("4", "UWQHD (3440×1440)"),
-                               ("5", "UHD   (3840×2160)")]:
-                if key == default_res:
-                    console.print(f"  [bold green][{key}] {label}[/bold green]")
-                else:
-                    console.print(f"  [{key}] {label}")
-            try:
-                res_choice = typer.prompt(f"Resolution [1-5]", default=default_res).strip()
-            except:
-                res_choice = default_res
             resolution_map = {"1": "1280x720", "2": "1920x1080", "3": "2560x1440", "4": "3440x1440", "5": "3840x2160"}
-            selected_resolution = resolution_map.get(res_choice, resolution_map.get(default_res, "1920x1080"))
+            resolution_names = {"hd": "1280x720", "fhd": "1920x1080", "wqhd": "2560x1440", "uwqhd": "3440x1440", "uhd": "3840x2160"}
+
+            if resolution:
+                # CLI --resolution provided, skip interactive prompt
+                res_lower = resolution.lower().strip()
+                if res_lower in resolution_names:
+                    selected_resolution = resolution_names[res_lower]
+                elif res_lower in resolution_map:
+                    selected_resolution = resolution_map[res_lower]
+                elif "x" in res_lower:
+                    # Direct pixel format like 1920x1080
+                    selected_resolution = resolution
+                else:
+                    console.print(f"[yellow]Unknown resolution '{resolution}', using FHD[/yellow]")
+                    selected_resolution = "1920x1080"
+                console.print(f"\n[dim]Resolution: {selected_resolution}[/dim]")
+            else:
+                # Interactive prompt
+                console.print(f"\n[bold]Which resolution was used?[/bold]")
+                for key, label in [("1", "HD    (1280×720)"), ("2", "FHD   (1920×1080)"),
+                                   ("3", "WQHD  (2560×1440)"), ("4", "UWQHD (3440×1440)"),
+                                   ("5", "UHD   (3840×2160)")]:
+                    if key == default_res:
+                        console.print(f"  [bold green][{key}] {label}[/bold green]")
+                    else:
+                        console.print(f"  [{key}] {label}")
+                try:
+                    res_choice = typer.prompt(f"Resolution [1-5]", default=default_res).strip()
+                except:
+                    res_choice = default_res
+                selected_resolution = resolution_map.get(res_choice, resolution_map.get(default_res, "1920x1080"))
 
             # 2. Ask for comment
             try:
@@ -1380,6 +1493,7 @@ def benchmark(
                         pass  # Log compression is optional
 
                     # Note: scheduler was captured at recording stop (game still running)
+                    # game_settings already built at function start from CLI parameters
 
                     # Calculate payload size for user feedback
                     import json as json_module
@@ -1405,7 +1519,7 @@ def benchmark(
                             system_info={
                                 "gpu": _short_gpu(selected_system_info.get("gpu", {}).get("model")),
                                 "cpu": _short_cpu(selected_system_info.get("cpu", {}).get("model")),
-                                "os": selected_system_info.get("os", {}).get("name", "Linux"),
+                                "os": _short_os(selected_system_info.get("os", {}).get("name", "Linux")),
                                 "kernel": _short_kernel(selected_system_info.get("os", {}).get("kernel")),
                                 "gpu_driver": selected_system_info.get("gpu", {}).get("driver_version"),
                                 "vulkan": selected_system_info.get("gpu", {}).get("vulkan_version"),
@@ -1425,6 +1539,7 @@ def benchmark(
                             frametimes=frametimes,
                             mangohud_log_compressed=mangohud_log_compressed,
                             comment=comment if comment else None,
+                            game_settings=game_settings if game_settings else None,
                         )
                     if result.success:
                         console.print(f"[bold green]✓ Uploaded![/bold green]")
@@ -1468,7 +1583,7 @@ def benchmark(
                                     system_info={
                                         "gpu": _short_gpu(selected_system_info.get("gpu", {}).get("model")),
                                         "cpu": _short_cpu(selected_system_info.get("cpu", {}).get("model")),
-                                        "os": selected_system_info.get("os", {}).get("name", "Linux"),
+                                        "os": _short_os(selected_system_info.get("os", {}).get("name", "Linux")),
                                         "kernel": _short_kernel(selected_system_info.get("os", {}).get("kernel")),
                                         "gpu_driver": selected_system_info.get("gpu", {}).get("driver_version"),
                                         "vulkan": selected_system_info.get("gpu", {}).get("vulkan_version"),
@@ -1488,6 +1603,7 @@ def benchmark(
                                     frametimes=frametimes,
                                     mangohud_log_compressed=mangohud_log_compressed,
                                     comment=comment if comment else None,
+                                    game_settings=game_settings if game_settings else None,
                                 )
                                 if result.success:
                                     console.print(f"[bold green]✓ Uploaded![/bold green]")

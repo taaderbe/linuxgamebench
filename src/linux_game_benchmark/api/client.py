@@ -105,6 +105,7 @@ class BenchmarkAPIClient:
         frametimes: Optional[list] = None,
         mangohud_log_compressed: Optional[str] = None,
         comment: Optional[str] = None,
+        game_settings: Optional[Dict[str, str]] = None,
         require_auth: bool = True,
     ) -> UploadResult:
         """
@@ -160,6 +161,7 @@ class BenchmarkAPIClient:
             "frametimes": frametimes,
             "mangohud_log_compressed": mangohud_log_compressed,
             "comment": comment,
+            "game_settings": game_settings,
         }
 
         try:
@@ -280,6 +282,7 @@ def upload_benchmark(
     frametimes: Optional[list] = None,
     mangohud_log_compressed: Optional[str] = None,
     comment: Optional[str] = None,
+    game_settings: Optional[Dict[str, str]] = None,
 ) -> UploadResult:
     """
     Upload a benchmark result.
@@ -296,6 +299,7 @@ def upload_benchmark(
         frametimes=frametimes,
         mangohud_log_compressed=mangohud_log_compressed,
         comment=comment,
+        game_settings=game_settings,
     )
 
 
