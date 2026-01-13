@@ -164,6 +164,9 @@ class FrametimeAnalyzer:
         Returns:
             Dict with keys: os, cpu, gpu, kernel (None if not found)
         """
+        import csv
+        from io import StringIO
+
         info = {"os": None, "cpu": None, "gpu": None, "kernel": None}
 
         try:
@@ -174,11 +177,29 @@ class FrametimeAnalyzer:
                 if "SYSTEM INFO" in line:
                     # Next line is header, line after is data
                     if i + 2 < len(lines):
-                        header = lines[i + 1].strip().split(",")
-                        data = lines[i + 2].strip().split(",")
-                        for h, d in zip(header, data):
-                            if h in ("os", "cpu", "gpu", "kernel"):
-                                info[h] = d
+                        header_line = lines[i + 1].strip()
+                        data_line = lines[i + 2].strip()
+
+                        # Use proper CSV parsing to handle quoted fields
+                        header_reader = csv.reader(StringIO(header_line))
+                        data_reader = csv.reader(StringIO(data_line))
+
+                        header = next(header_reader, [])
+                        data = next(data_reader, [])
+
+                        # Only parse if field counts match
+                        if len(header) == len(data):
+                            for h, d in zip(header, data):
+                                h = h.strip()
+                                if h in ("os", "cpu", "gpu", "kernel"):
+                                    info[h] = d.strip()
+
+                            # Validate GPU doesn't look like a CPU
+                            gpu = info.get("gpu", "") or ""
+                            cpu_keywords = ["ryzen", "intel core", "i5-", "i7-", "i9-", "threadripper", "xeon"]
+                            if any(kw in gpu.lower() for kw in cpu_keywords):
+                                # GPU field contains CPU name - parsing error, clear it
+                                info["gpu"] = None
                     break
         except Exception:
             pass
