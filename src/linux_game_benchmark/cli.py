@@ -1556,10 +1556,14 @@ def benchmark(
 
                             # Login retry loop
                             logged_in = False
+                            upload_anonymous = False
                             while True:
                                 login_choice = typer.prompt("Try login? [Y/n]", default="y").strip().lower()
                                 if login_choice not in ["y", "yes", "j", "ja", ""]:
-                                    console.print("[dim]Upload skipped.[/dim]")
+                                    # User declined login - upload anonymously
+                                    from linux_game_benchmark.api.auth import logout as auth_logout
+                                    auth_logout()  # Clear expired token
+                                    upload_anonymous = True
                                     break
                                 # Prompt for credentials
                                 email = typer.prompt("Email")
@@ -1573,9 +1577,12 @@ def benchmark(
                                 # Login failed - ask to retry
                                 console.print(f"[yellow]{msg}[/yellow]")
 
-                            if logged_in:
-                                # Retry upload after successful login
-                                console.print("[dim]Retrying upload...[/dim]")
+                            if logged_in or upload_anonymous:
+                                # Retry upload after successful login or anonymously
+                                if upload_anonymous:
+                                    console.print("[dim]Uploading anonymously...[/dim]")
+                                else:
+                                    console.print("[dim]Retrying upload...[/dim]")
                                 result = upload_benchmark(
                                     steam_app_id=steam_app_id,
                                     game_name=target_game["name"],
@@ -1606,7 +1613,10 @@ def benchmark(
                                     game_settings=game_settings if game_settings else None,
                                 )
                                 if result.success:
-                                    console.print(f"[bold green]✓ Uploaded![/bold green]")
+                                    if upload_anonymous:
+                                        console.print(f"[bold green]✓ Uploaded anonymously![/bold green]")
+                                    else:
+                                        console.print(f"[bold green]✓ Uploaded![/bold green]")
                                     if result.url:
                                         console.print(f"  {result.url}")
                                 else:
