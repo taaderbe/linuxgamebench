@@ -1498,14 +1498,11 @@ def benchmark(
         gpu_pci_dev=gpu_pci,
     )
 
-    # Set Steam launch options with pci_dev for multi-GPU systems
+    # Set Steam launch options - use MANGOHUD_CONFIGFILE to ensure all settings are used
+    # This is more reliable than MANGOHUD_CONFIG for Proton/Wine games
     try:
-        if gpu_pci:
-            # Escape colons for MANGOHUD_CONFIG env var (required format)
-            pci_escaped = gpu_pci.replace(":", r"\:")
-            launch_opts = f'MANGOHUD=1 MANGOHUD_CONFIG="pci_dev={pci_escaped}" %command%'
-        else:
-            launch_opts = "MANGOHUD=1 %command%"
+        config_path = mangohud_manager.config_file
+        launch_opts = f'MANGOHUD=1 MANGOHUD_CONFIGFILE={config_path} %command%'
         set_launch_options(steam_app_id, launch_opts)
     except Exception as e:
         console.print(f"[yellow]Warning: Could not set launch options: {e}[/yellow]")
