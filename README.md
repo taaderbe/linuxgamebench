@@ -3,7 +3,7 @@
 Automated benchmark tool for Steam games on Linux.
 Measures FPS, stutter, frame pacing and more using MangoHud.
 
-![Benchmark Results on linuxgamebench.com](docs/screenshot_website.png)
+![Benchmark Results on linuxgamebench.com](docs/update_e.png)
 
 ## Features
 
