@@ -29,7 +29,7 @@ class Settings:
     }
 
     # Client version
-    CLIENT_VERSION = "0.1.41"
+    CLIENT_VERSION = "0.1.42"
 
     def _load_config(self) -> dict:
         """Load config from file."""
@@ -58,8 +58,8 @@ class Settings:
         config = self._load_config()
         if config.get("stage"):
             return config["stage"]
-        # 3. Default
-        return "dev"
+        # 3. Default - MUST be prod for released clients!
+        return "prod"
 
     def set_stage(self, stage: str) -> bool:
         """Set stage persistently in config file."""
