@@ -10,6 +10,32 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
+# AMD GPU codename to product name mapping
+AMD_GPU_CODENAMES = {
+    # RDNA 4
+    "GFX1200": "RX 9070 Series",
+    "GFX1201": "RX 9060 Series",
+    # RDNA 3
+    "GFX1100": "RX 7900 Series",
+    "GFX1101": "RX 7800 Series",
+    "GFX1102": "RX 7600 Series",
+    # RDNA 2
+    "NAVI21": "RX 6800/6900 Series",
+    "NAVI22": "RX 6700 Series",
+    "NAVI23": "RX 6600 Series",
+    "NAVI24": "RX 6500/6400 Series",
+    # RDNA 1
+    "NAVI10": "RX 5600/5700 Series",
+    "NAVI14": "RX 5500 Series",
+    # GCN
+    "HAWAII": "R9 290/390 Series",
+    "FIJI": "R9 Fury Series",
+    "POLARIS10": "RX 480/580 Series",
+    "POLARIS11": "RX 460/560 Series",
+    "VEGA10": "RX Vega 56/64",
+    "VEGA20": "Radeon VII",
+}
+
 
 def get_system_info() -> dict:
     """
@@ -304,12 +330,25 @@ def get_gpu_info() -> dict:
     elif info["vendor"] == "AMD":
         # For AMD: glxinfo gives full info but includes driver details in parentheses
         # e.g. "AMD Radeon RX 7900 XTX (radeonsi, navi31, LLVM 21.1.6, DRM 3.64, 6.18.2-3-cachyos)"
-        # We want just "AMD Radeon RX 7900 XTX"
-        # But sometimes glxinfo only gives "AMD Radeon Graphics" (generic), so prefer vulkaninfo
+        # or "AMD Radeon Graphics (RADV GFX1200)" for generic names with codename
+        # We want to extract a proper model name
         glx_clean = glxinfo_model.split("(")[0].strip() if glxinfo_model else None
+
+        # Try to extract codename from glxinfo (e.g., "RADV GFX1200" or "RADV HAWAII")
+        codename_model = None
+        if glxinfo_model:
+            codename_match = re.search(r"RADV\s+(\w+)", glxinfo_model, re.IGNORECASE)
+            if codename_match:
+                codename = codename_match.group(1).upper()
+                if codename in AMD_GPU_CODENAMES:
+                    codename_model = AMD_GPU_CODENAMES[codename]
+
         # Prefer specific names over generic "AMD Radeon Graphics"
         if glx_clean and glx_clean != "AMD Radeon Graphics":
             info["model"] = glx_clean
+        elif codename_model:
+            # Use mapped codename (e.g., GFX1200 -> "RX 9070 Series")
+            info["model"] = codename_model
         elif vulkan_model and "AMD" in vulkan_model:
             info["model"] = vulkan_model
         elif lspci_model:
