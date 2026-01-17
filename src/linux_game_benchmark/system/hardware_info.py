@@ -282,7 +282,8 @@ def get_gpu_info() -> dict:
                         info["driver_version"] = match.group(1)
                 elif "NVIDIA" in version:
                     info["driver"] = "NVIDIA"
-                    match = re.search(r"(\d+\.\d+)", version)
+                    # Extract version after "NVIDIA" (e.g., "4.6.0 NVIDIA 550.54.14" -> "550.54.14")
+                    match = re.search(r"NVIDIA (\d+\.\d+\.\d+)", version)
                     if match:
                         info["driver_version"] = match.group(1)
     except Exception:
