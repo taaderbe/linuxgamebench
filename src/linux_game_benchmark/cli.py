@@ -365,8 +365,11 @@ def _select_gpu_for_benchmark(system_info: dict, console: "Console", log_gpu: st
     """
     Get GPU info for benchmark upload.
 
-    Server uses MangoHud log GPU as authoritative source, so no user selection needed.
-    This function just formats the GPU info from the log or falls back to lspci.
+    Priority:
+    1. MangoHud log GPU (authoritative - shows which GPU ran the game)
+    2. Saved default GPU from config
+    3. Auto-select if only one dGPU
+    4. Prompt user if multiple dGPUs found
 
     Args:
         system_info: Current system info dict
@@ -377,6 +380,7 @@ def _select_gpu_for_benchmark(system_info: dict, console: "Console", log_gpu: st
         Modified system_info dict with GPU info.
     """
     from linux_game_benchmark.system.hardware_info import detect_all_gpus, get_gpu_info
+    from linux_game_benchmark.config.settings import settings
 
     # If we have a valid log GPU, use it directly
     if log_gpu and "VGA" not in log_gpu.upper() and "controller" not in log_gpu.lower():
@@ -391,16 +395,61 @@ def _select_gpu_for_benchmark(system_info: dict, console: "Console", log_gpu: st
         new_info["gpu"] = gpu_info
         return new_info
 
-    # Fallback: use lspci detection (prefer dGPU)
+    # Fallback: use lspci detection
     gpus = detect_all_gpus()
-    if gpus:
-        # Prefer discrete GPU
-        selected = next((g for g in gpus if g["is_dgpu"]), gpus[0])
+    if not gpus:
+        return system_info
+
+    # Filter to discrete GPUs only
+    dgpus = [g for g in gpus if g["is_dgpu"]]
+
+    # If no dGPUs, use first GPU (probably iGPU-only system)
+    if not dgpus:
+        selected = gpus[0]
         console.print(f"[dim]GPU: {selected['display_name']}[/dim]")
         return _apply_gpu_selection(system_info, selected, log_gpu)
 
-    # No GPU detected - use existing system_info
-    return system_info
+    # If only one dGPU, use it
+    if len(dgpus) == 1:
+        selected = dgpus[0]
+        console.print(f"[dim]GPU: {selected['display_name']}[/dim]")
+        return _apply_gpu_selection(system_info, selected, log_gpu)
+
+    # Multiple dGPUs - check for saved preference
+    saved_pci = settings.get_default_gpu()
+    if saved_pci:
+        for gpu in dgpus:
+            if gpu["pci_address"] == saved_pci:
+                console.print(f"[dim]GPU: {gpu['display_name']} (saved default)[/dim]")
+                return _apply_gpu_selection(system_info, gpu, log_gpu)
+
+    # No saved preference - prompt user
+    console.print("\n[bold yellow]Multiple GPUs detected:[/bold yellow]")
+    for i, gpu in enumerate(dgpus, 1):
+        console.print(f"  [{i}] {gpu['display_name']} ({gpu['pci_address']})")
+
+    console.print()
+    while True:
+        try:
+            choice = typer.prompt(
+                "Which GPU for benchmarks?",
+                default="1",
+            )
+            idx = int(choice) - 1
+            if 0 <= idx < len(dgpus):
+                selected = dgpus[idx]
+                break
+            console.print(f"[red]Please enter 1-{len(dgpus)}[/red]")
+        except ValueError:
+            console.print(f"[red]Please enter a number 1-{len(dgpus)}[/red]")
+
+    # Ask to save as default
+    save_default = typer.confirm("Save as default GPU?", default=True)
+    if save_default:
+        settings.set_default_gpu(selected["pci_address"])
+        console.print(f"[green]✓ Saved {selected['display_name']} as default GPU[/green]")
+
+    return _apply_gpu_selection(system_info, selected, log_gpu)
 
 
 def _apply_gpu_selection(system_info: dict, selected_gpu: dict, log_gpu: str = None) -> dict:
@@ -1156,11 +1205,23 @@ def check() -> None:
         all_good = False
 
     # Check for required tools
-    for tool in ["lspci", "glxinfo", "vulkaninfo"]:
+    required_tools = ["lspci", "vulkaninfo"]  # Required for GPU detection
+    optional_tools = ["glxinfo"]  # Nice to have
+
+    for tool in required_tools:
         if shutil.which(tool):
             console.print(f"[green]{tool}:[/green] Available")
         else:
-            console.print(f"[yellow]{tool}:[/yellow] Not found (some info may be unavailable)")
+            console.print(f"[red]{tool}:[/red] Not installed (required for GPU detection)")
+            if tool == "vulkaninfo":
+                console.print("  Install: sudo pacman -S vulkan-tools (Arch) / apt install vulkan-tools (Debian)")
+            all_good = False
+
+    for tool in optional_tools:
+        if shutil.which(tool):
+            console.print(f"[green]{tool}:[/green] Available")
+        else:
+            console.print(f"[yellow]{tool}:[/yellow] Not found (optional)")
 
     console.print()
     if all_good:
@@ -1232,6 +1293,89 @@ def info() -> None:
         protons = steam.get("proton_versions", [])
         if protons:
             console.print(f"[bold]Proton Versions:[/bold] {', '.join(protons[:5])}")
+
+
+@app.command()
+def gpu(
+    set_default: bool = typer.Option(False, "--set", "-s", help="Select and save a new default GPU"),
+    clear: bool = typer.Option(False, "--clear", "-c", help="Clear the saved default GPU"),
+) -> None:
+    """
+    Show or configure the default GPU for benchmarks.
+
+    Without options: Shows all detected GPUs and the current default.
+    With --set: Prompts to select a new default GPU.
+    With --clear: Clears the saved default GPU.
+    """
+    from linux_game_benchmark.system.hardware_info import detect_all_gpus, get_gpu_info
+    from linux_game_benchmark.config.settings import settings
+
+    if clear:
+        settings.clear_default_gpu()
+        console.print("[green]✓ Default GPU setting cleared[/green]")
+        return
+
+    # Get all GPUs
+    gpus = detect_all_gpus()
+    gpu_info = get_gpu_info()
+
+    if not gpus:
+        console.print("[yellow]No GPUs detected via lspci[/yellow]")
+        console.print(f"[dim]vulkaninfo reports: {gpu_info.get('model', 'Unknown')}[/dim]")
+        return
+
+    # Get saved default
+    saved_pci = settings.get_default_gpu()
+
+    # Display GPUs
+    console.print("[bold]Detected GPUs:[/bold]\n")
+
+    dgpus = [g for g in gpus if g["is_dgpu"]]
+    igpus = [g for g in gpus if not g["is_dgpu"]]
+
+    if dgpus:
+        console.print("[bold green]Discrete GPUs:[/bold green]")
+        for i, g in enumerate(dgpus, 1):
+            is_default = " [cyan](default)[/cyan]" if g["pci_address"] == saved_pci else ""
+            console.print(f"  [{i}] {g['display_name']} ({g['pci_address']}){is_default}")
+
+    if igpus:
+        console.print("\n[bold yellow]Integrated GPUs:[/bold yellow]")
+        for g in igpus:
+            console.print(f"  • {g['display_name']} ({g['pci_address']})")
+
+    # Show vulkaninfo result
+    console.print(f"\n[bold]Active GPU (vulkaninfo):[/bold] {gpu_info.get('model', 'Unknown')}")
+
+    if not saved_pci and len(dgpus) > 1:
+        console.print("\n[dim]Tip: Use 'lgb gpu --set' to set a default GPU for multi-GPU systems[/dim]")
+
+    # Set new default if requested
+    if set_default:
+        if not dgpus:
+            console.print("\n[yellow]No discrete GPUs to select from[/yellow]")
+            return
+
+        if len(dgpus) == 1:
+            selected = dgpus[0]
+            settings.set_default_gpu(selected["pci_address"])
+            console.print(f"\n[green]✓ Set {selected['display_name']} as default GPU[/green]")
+            return
+
+        console.print("\n[bold]Select default GPU:[/bold]")
+        while True:
+            try:
+                choice = typer.prompt("Enter number", default="1")
+                idx = int(choice) - 1
+                if 0 <= idx < len(dgpus):
+                    selected = dgpus[idx]
+                    break
+                console.print(f"[red]Please enter 1-{len(dgpus)}[/red]")
+            except ValueError:
+                console.print(f"[red]Please enter a number 1-{len(dgpus)}[/red]")
+
+        settings.set_default_gpu(selected["pci_address"])
+        console.print(f"\n[green]✓ Set {selected['display_name']} as default GPU[/green]")
 
 
 @app.command()
@@ -1822,6 +1966,8 @@ def benchmark(
                                 "vulkan": selected_system_info.get("gpu", {}).get("vulkan_version"),
                                 "ram_gb": int(selected_system_info.get("ram", {}).get("total_gb", 0)),
                                 "scheduler": scheduler,
+                                "gpu_device_id": selected_system_info.get("gpu", {}).get("device_id"),
+                                "gpu_lspci_raw": selected_system_info.get("gpu", {}).get("lspci_raw"),
                             },
                             metrics={
                                 "fps_avg": fps.get('average', 0),
@@ -1893,6 +2039,8 @@ def benchmark(
                                         "vulkan": selected_system_info.get("gpu", {}).get("vulkan_version"),
                                         "ram_gb": int(selected_system_info.get("ram", {}).get("total_gb", 0)),
                                         "scheduler": scheduler,
+                                        "gpu_device_id": selected_system_info.get("gpu", {}).get("device_id"),
+                                        "gpu_lspci_raw": selected_system_info.get("gpu", {}).get("lspci_raw"),
                                     },
                                     metrics={
                                         "fps_avg": fps.get('average', 0),

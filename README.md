@@ -22,6 +22,7 @@ Measures FPS, stutter, frame pacing and more using MangoHud.
 - Linux (tested on Arch, Fedora, Ubuntu, openSUSE)
 - Steam installed
 - MangoHud installed
+- Vulkan tools (`vulkaninfo`) for GPU detection
 - Python 3.10+
 
 
@@ -30,8 +31,8 @@ Measures FPS, stutter, frame pacing and more using MangoHud.
 ### Arch Linux / CachyOS (Recommended)
 
 ```bash
-# Install MangoHud
-sudo pacman -S mangohud lib32-mangohud
+# Install MangoHud and Vulkan tools
+sudo pacman -S mangohud lib32-mangohud vulkan-tools
 
 # Install pipx (manages Python CLI tools)
 sudo pacman -S python-pipx
@@ -43,15 +44,15 @@ pipx install git+https://github.com/taaderbe/linuxgamebench.git
 ### Ubuntu/Debian
 
 ```bash
-sudo apt install mangohud pipx
+sudo apt install mangohud vulkan-tools pipx
 pipx install git+https://github.com/taaderbe/linuxgamebench.git
 ```
 
 ### Fedora
 
 ```bash
-# Install MangoHud
-sudo dnf install mangohud
+# Install MangoHud and Vulkan tools
+sudo dnf install mangohud vulkan-tools
 
 # Install pipx
 sudo dnf install pipx
@@ -64,7 +65,7 @@ pipx install git+https://github.com/taaderbe/linuxgamebench.git
 
 ```bash
 # All packages available in main repo
-sudo zypper install mangohud python313-pipx
+sudo zypper install mangohud vulkan-tools python313-pipx
 
 # Install the tool
 pipx install git+https://github.com/taaderbe/linuxgamebench.git
@@ -224,6 +225,7 @@ xdg-open ~/benchmark_results/index.html
 | `lgb list-games` | Show installed Steam games |
 | `lgb scan` | Scan Steam library |
 | `lgb info` | Show system information |
+| `lgb gpu` | Show detected GPUs and configure default |
 | `lgb benchmark [game]` | Launch game and benchmark |
 | `lgb analyze [log]` | Analyze MangoHud log |
 | `lgb report` | Regenerate HTML reports |
@@ -292,7 +294,53 @@ lgb login          # Login to your account
 
 ## Multi-GPU Systems
 
-On laptops and desktops with multiple GPUs (e.g., Intel iGPU + NVIDIA dGPU), the tool automatically detects the correct GPU from the MangoHud log. The GPU that was actually used for rendering is recorded - no manual selection needed.
+The tool handles multiple GPUs automatically:
+
+1. **MangoHud Log GPU** (Primary): The GPU that actually rendered the game is detected from the log
+2. **Saved Default**: For systems with multiple discrete GPUs (e.g., 2x RTX 4090), you can set a default
+3. **Auto-Detection**: Falls back to discrete GPU over integrated
+
+```bash
+# View all detected GPUs
+lgb gpu
+
+# Set default GPU for multi-GPU systems
+lgb gpu --set
+
+# Clear saved default
+lgb gpu --clear
+```
+
+On first benchmark with multiple discrete GPUs, you'll be prompted to select one. The selection is saved for future benchmarks.
+
+## FAQ
+
+### Why is Vulkan required?
+
+The tool uses `vulkaninfo` to detect the exact GPU model. This is the most reliable method across all GPU vendors (AMD, NVIDIA, Intel) and works for GPUs released in the last 10+ years.
+
+**Don't worry:** If you're gaming on Linux, you already have Vulkan installed - it's required for Steam/Proton and MangoHud.
+
+### Which GPUs are supported?
+
+Any GPU with Vulkan support:
+- **NVIDIA**: GeForce GTX 600 series and newer (2012+)
+- **AMD**: Radeon HD 7000 series and newer (2012+)
+- **Intel**: Skylake (HD 520/530) and newer (2015+)
+
+### How do I check if Vulkan is installed?
+
+```bash
+vulkaninfo --summary
+```
+
+If this shows your GPU, you're good to go!
+
+### My GPU shows as "Unknown" - what do I do?
+
+1. Make sure `vulkan-tools` is installed
+2. Run `lgb check` to verify all requirements
+3. If still not working, run `lgb gpu` to see what's detected
 
 ## License
 

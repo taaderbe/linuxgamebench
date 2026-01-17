@@ -29,7 +29,7 @@ class Settings:
     }
 
     # Client version
-    CLIENT_VERSION = "0.1.40"
+    CLIENT_VERSION = "0.1.41"
 
     def _load_config(self) -> dict:
         """Load config from file."""
@@ -59,7 +59,7 @@ class Settings:
         if config.get("stage"):
             return config["stage"]
         # 3. Default
-        return "prod"
+        return "dev"
 
     def set_stage(self, stage: str) -> bool:
         """Set stage persistently in config file."""
@@ -94,6 +94,24 @@ class Settings:
     def get_stage_url(cls, stage: str) -> Optional[str]:
         """Get API URL for a specific stage."""
         return cls.STAGES.get(stage)
+
+    def get_default_gpu(self) -> Optional[str]:
+        """Get default GPU PCI address from config."""
+        config = self._load_config()
+        return config.get("default_gpu_pci")
+
+    def set_default_gpu(self, pci_address: str) -> None:
+        """Set default GPU PCI address in config."""
+        config = self._load_config()
+        config["default_gpu_pci"] = pci_address
+        self._save_config(config)
+
+    def clear_default_gpu(self) -> None:
+        """Clear default GPU setting."""
+        config = self._load_config()
+        if "default_gpu_pci" in config:
+            del config["default_gpu_pci"]
+            self._save_config(config)
 
 
 # Singleton instance

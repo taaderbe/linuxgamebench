@@ -146,6 +146,8 @@ class BenchmarkAPIClient:
                 "vulkan": system_info.get("vulkan"),
                 "ram_gb": system_info.get("ram_gb"),
                 "scheduler": system_info.get("scheduler"),
+                "gpu_device_id": system_info.get("gpu_device_id"),
+                "gpu_lspci_raw": system_info.get("gpu_lspci_raw"),
             },
             "metrics": {
                 "fps_avg": metrics.get("fps_avg") or metrics.get("average", 0),

@@ -10,6 +10,49 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
+# PCI Device ID to GPU model mapping (vendor:device -> model name)
+# Format: "vendor:device" (lowercase hex)
+GPU_DEVICE_IDS = {
+    # AMD RDNA 4
+    "1002:7480": "RX 9070 XT",
+    "1002:7481": "RX 9070",
+    # AMD RDNA 3
+    "1002:744c": "RX 7900 XTX",
+    "1002:7448": "RX 7900 XT",
+    "1002:745e": "RX 7900 GRE",
+    "1002:7470": "RX 7800 XT",
+    "1002:7471": "RX 7700 XT",
+    "1002:7480": "RX 7600 XT",
+    "1002:7489": "RX 7600",
+    # AMD RDNA 2
+    "1002:73bf": "RX 6900 XT",
+    "1002:73af": "RX 6800 XT",
+    "1002:73a5": "RX 6800",
+    "1002:73df": "RX 6700 XT",
+    "1002:73ff": "RX 6600 XT",
+    "1002:73e3": "RX 6600",
+    # NVIDIA RTX 50 Series
+    "10de:2684": "RTX 5090",
+    "10de:2685": "RTX 5080",
+    "10de:2704": "RTX 5070 Ti",
+    "10de:2705": "RTX 5070",
+    # NVIDIA RTX 40 Series
+    "10de:2684": "RTX 4090",
+    "10de:2702": "RTX 4080 SUPER",
+    "10de:2704": "RTX 4080",
+    "10de:2782": "RTX 4070 Ti SUPER",
+    "10de:2783": "RTX 4070 Ti",
+    "10de:2786": "RTX 4070 SUPER",
+    "10de:2786": "RTX 4070",
+    "10de:2860": "RTX 4060 Ti",
+    "10de:2882": "RTX 4060",
+    # NVIDIA RTX 30 Series
+    "10de:2204": "RTX 3090",
+    "10de:2206": "RTX 3080",
+    "10de:2484": "RTX 3070",
+    "10de:2503": "RTX 3060",
+}
+
 # AMD GPU codename to product name mapping
 AMD_GPU_CODENAMES = {
     # RDNA 4
@@ -225,7 +268,15 @@ def detect_all_gpus() -> list[dict]:
 
 
 def get_gpu_info() -> dict:
-    """Get GPU information."""
+    """Get GPU information.
+
+    Priority for GPU model detection:
+    1. vulkaninfo deviceName (most accurate, exact marketing name)
+    2. device_id + VRAM disambiguation (for shared device IDs like Navi 31)
+    3. lspci model name (fallback)
+
+    Always stores lspci_raw and device_id for debugging.
+    """
     info = {
         "model": "Unknown",
         "vendor": "Unknown",
@@ -233,139 +284,16 @@ def get_gpu_info() -> dict:
         "driver": "Unknown",
         "driver_version": "",
         "vulkan_version": "",
+        "device_id": "",
+        "lspci_raw": "",
     }
 
     lspci_model = None
     vulkan_model = None
 
-    # Try lspci for GPU model (most reliable for identifying the chip)
-    try:
-        result = subprocess.run(
-            ["lspci", "-v"],
-            capture_output=True,
-            text=True,
-        )
-        for line in result.stdout.split("\n"):
-            if "VGA" in line or "3D controller" in line:
-                # Extract model name
-                if "NVIDIA" in line:
-                    info["vendor"] = "NVIDIA"
-                    match = re.search(r"NVIDIA.*\[(.+)\]", line)
-                    if match:
-                        lspci_model = match.group(1)
-                elif "AMD" in line or "ATI" in line:
-                    info["vendor"] = "AMD"
-                    match = re.search(r"(Radeon[^]]+|AMD[^]]+)", line)
-                    if match:
-                        lspci_model = match.group(1).strip()
-                elif "Intel" in line:
-                    info["vendor"] = "Intel"
-                    # Intel: capture full description including brackets
-                    # e.g. "TigerLake-LP GT2 [Iris Xe Graphics]"
-                    match = re.search(r"Intel Corporation (.+?)(?:\s*\(rev|\s*$)", line)
-                    if match:
-                        lspci_model = match.group(1).strip()
-                break
-    except Exception:
-        pass
+    # === Step 1: Gather raw data from all sources ===
 
-    # Get Vulkan device name (often has good Intel naming)
-    try:
-        result = subprocess.run(
-            ["vulkaninfo", "--summary"],
-            capture_output=True,
-            text=True,
-        )
-        for line in result.stdout.split("\n"):
-            if "deviceName" in line:
-                match = re.search(r"=\s*(.+)", line)
-                if match:
-                    vulkan_model = match.group(1).strip()
-            if "apiVersion" in line:
-                match = re.search(r"= (\d+\.\d+\.\d+)", line)
-                if match:
-                    info["vulkan_version"] = match.group(1)
-    except Exception:
-        pass
-
-    # Get driver info from glxinfo
-    glxinfo_model = None
-    try:
-        result = subprocess.run(
-            ["glxinfo", "-B"],
-            capture_output=True,
-            text=True,
-        )
-        for line in result.stdout.split("\n"):
-            if "OpenGL renderer" in line:
-                glxinfo_model = line.split(":")[-1].strip()
-            if "OpenGL version" in line:
-                version = line.split(":")[-1].strip()
-                if "Mesa" in version:
-                    info["driver"] = "Mesa"
-                    match = re.search(r"Mesa (\d+\.\d+\.\d+)", version)
-                    if match:
-                        info["driver_version"] = match.group(1)
-                elif "NVIDIA" in version:
-                    info["driver"] = "NVIDIA"
-                    # Extract version after "NVIDIA" (e.g., "4.6.0 NVIDIA 550.54.14" -> "550.54.14")
-                    match = re.search(r"NVIDIA (\d+\.\d+\.\d+)", version)
-                    if match:
-                        info["driver_version"] = match.group(1)
-    except Exception:
-        pass
-
-    # Choose best model name based on vendor
-    if info["vendor"] == "Intel":
-        # For Intel: prefer vulkaninfo > lspci > glxinfo
-        # vulkaninfo gives clean names like "Intel(R) Iris(R) Xe Graphics (TGL GT2)"
-        # lspci gives "TigerLake-LP GT2 [Iris Xe Graphics]"
-        # glxinfo sometimes only gives "Mesa Intel(R) Graphics"
-        if vulkan_model and "Intel" in vulkan_model:
-            info["model"] = vulkan_model
-        elif lspci_model:
-            info["model"] = f"Intel {lspci_model}"
-        elif glxinfo_model:
-            info["model"] = glxinfo_model
-    elif info["vendor"] == "AMD":
-        # For AMD: glxinfo gives full info but includes driver details in parentheses
-        # e.g. "AMD Radeon RX 7900 XTX (radeonsi, navi31, LLVM 21.1.6, DRM 3.64, 6.18.2-3-cachyos)"
-        # or "AMD Radeon Graphics (RADV GFX1200)" for generic names with codename
-        # We want to extract a proper model name
-        glx_clean = glxinfo_model.split("(")[0].strip() if glxinfo_model else None
-
-        # Try to extract codename from glxinfo (e.g., "RADV GFX1200" or "RADV HAWAII")
-        codename_model = None
-        if glxinfo_model:
-            codename_match = re.search(r"RADV\s+(\w+)", glxinfo_model, re.IGNORECASE)
-            if codename_match:
-                codename = codename_match.group(1).upper()
-                if codename in AMD_GPU_CODENAMES:
-                    codename_model = AMD_GPU_CODENAMES[codename]
-
-        # Prefer specific names over generic "AMD Radeon Graphics"
-        if glx_clean and glx_clean != "AMD Radeon Graphics":
-            info["model"] = glx_clean
-        elif codename_model:
-            # Use mapped codename (e.g., GFX1200 -> "RX 9070 Series")
-            info["model"] = codename_model
-        elif vulkan_model and "AMD" in vulkan_model:
-            info["model"] = vulkan_model
-        elif lspci_model:
-            info["model"] = lspci_model
-        elif glx_clean:
-            info["model"] = glx_clean
-    elif info["vendor"] == "NVIDIA":
-        # For NVIDIA: lspci is usually clean
-        if lspci_model:
-            info["model"] = lspci_model
-        elif glxinfo_model:
-            info["model"] = glxinfo_model
-    else:
-        # Fallback
-        info["model"] = glxinfo_model or lspci_model or vulkan_model or "Unknown"
-
-    # Try to get VRAM from sysfs (AMD) - check all cards and find the largest
+    # Get VRAM from sysfs first (needed for disambiguation)
     try:
         max_vram = 0
         drm_path = Path("/sys/class/drm")
@@ -384,7 +312,153 @@ def get_gpu_info() -> dict:
     except Exception:
         pass
 
-    # Fallback: try to get VRAM from glxinfo
+    # Try lspci -nn for device ID and raw line (always needed for debugging)
+    try:
+        result = subprocess.run(
+            ["lspci", "-nn"],
+            capture_output=True,
+            text=True,
+        )
+        for line in result.stdout.split("\n"):
+            if "VGA" in line or "3D controller" in line:
+                # Skip integrated graphics if we already found a discrete GPU
+                if info["lspci_raw"]:
+                    # Intel iGPU
+                    if "Intel" in line:
+                        continue
+                    # AMD iGPU (Ryzen APU integrated graphics)
+                    # Codenames: Granite Ridge, Raphael, Phoenix, Hawk Point, Rembrandt, Cezanne, etc.
+                    amd_igpu_patterns = ["Granite Ridge", "Raphael", "Phoenix", "Hawk Point",
+                                         "Rembrandt", "Cezanne", "Renoir", "Picasso", "Raven"]
+                    if any(igpu in line for igpu in amd_igpu_patterns):
+                        continue
+
+                # Store raw lspci line for debugging
+                info["lspci_raw"] = line.strip()
+
+                # Extract PCI device ID (e.g., "[10de:2484]" -> "10de:2484")
+                device_id_match = re.search(r"\[([0-9a-fA-F]{4}:[0-9a-fA-F]{4})\](?:\s*\(rev|\s*$)", line)
+                if device_id_match:
+                    info["device_id"] = device_id_match.group(1).lower()
+
+                # Detect vendor
+                if "NVIDIA" in line:
+                    info["vendor"] = "NVIDIA"
+                    match = re.search(r"NVIDIA.*\[(.+?)\]", line)
+                    if match:
+                        lspci_model = match.group(1)
+                elif "AMD" in line or "ATI" in line:
+                    info["vendor"] = "AMD"
+                    match = re.search(r"\]:\s*.*?\[(.+?)\]", line)
+                    if match:
+                        lspci_model = match.group(1).strip()
+                elif "Intel" in line:
+                    info["vendor"] = "Intel"
+                    match = re.search(r"Intel Corporation (.+?)(?:\s*\[|\s*\(rev|\s*$)", line)
+                    if match:
+                        lspci_model = match.group(1).strip()
+    except Exception:
+        pass
+
+    # Get Vulkan device name (PRIMARY SOURCE for GPU model)
+    try:
+        result = subprocess.run(
+            ["vulkaninfo", "--summary"],
+            capture_output=True,
+            text=True,
+        )
+        for line in result.stdout.split("\n"):
+            if "deviceName" in line:
+                match = re.search(r"=\s*(.+)", line)
+                if match:
+                    raw_name = match.group(1).strip()
+                    # Clean up the name - remove driver suffix like "(RADV NAVI31)" or "(RADV RAPHAEL_MENDOCINO)"
+                    # Keep the marketing name part
+                    clean_name = re.sub(r"\s*\(RADV\s+\w+\)\s*$", "", raw_name)
+                    clean_name = re.sub(r"\s*\(TU\d+\)\s*$", "", clean_name)  # NVIDIA Turing
+                    clean_name = re.sub(r"\s*\(GA\d+\)\s*$", "", clean_name)  # NVIDIA Ampere
+                    clean_name = re.sub(r"\s*\(AD\d+\)\s*$", "", clean_name)  # NVIDIA Ada
+
+                    # Skip CPU/APU entries (like "AMD Ryzen 7 9800X3D...")
+                    if "Ryzen" not in clean_name and "Core" not in clean_name and "Processor" not in clean_name:
+                        vulkan_model = clean_name.strip()
+                        break  # Use first discrete GPU
+            if "apiVersion" in line:
+                match = re.search(r"= (\d+\.\d+\.\d+)", line)
+                if match:
+                    info["vulkan_version"] = match.group(1)
+    except Exception:
+        pass
+
+    # Get driver info from glxinfo
+    try:
+        result = subprocess.run(
+            ["glxinfo", "-B"],
+            capture_output=True,
+            text=True,
+        )
+        for line in result.stdout.split("\n"):
+            if "OpenGL version" in line:
+                version = line.split(":")[-1].strip()
+                if "Mesa" in version:
+                    info["driver"] = "Mesa"
+                    match = re.search(r"Mesa (\d+\.\d+\.\d+)", version)
+                    if match:
+                        info["driver_version"] = match.group(1)
+                elif "NVIDIA" in version:
+                    info["driver"] = "NVIDIA"
+                    match = re.search(r"NVIDIA (\d+\.\d+\.\d+)", version)
+                    if match:
+                        info["driver_version"] = match.group(1)
+    except Exception:
+        pass
+
+    # === Step 2: Determine GPU model with priority ===
+
+    # Priority 1: vulkaninfo deviceName (most accurate)
+    if vulkan_model:
+        info["model"] = vulkan_model
+        return info
+
+    # Priority 2: device_id + VRAM disambiguation (for shared device IDs)
+    if info["device_id"]:
+        device_id = info["device_id"]
+        vram_gb = info["vram_mb"] / 1024 if info["vram_mb"] > 0 else 0
+
+        # AMD Navi 31 variants (shared device ID 1002:744c)
+        if device_id == "1002:744c":
+            if vram_gb >= 23:  # 24GB
+                info["model"] = "AMD Radeon RX 7900 XTX"
+            elif vram_gb >= 19:  # 20GB
+                info["model"] = "AMD Radeon RX 7900 XT"
+            elif vram_gb >= 15:  # 16GB
+                info["model"] = "AMD Radeon RX 7900 GRE"
+            else:
+                info["model"] = "AMD Radeon RX 7900"  # Unknown variant
+            return info
+
+        # AMD Navi 32 variants (RX 7800 XT / 7700 XT)
+        if device_id == "1002:7480":
+            if vram_gb >= 15:  # 16GB
+                info["model"] = "AMD Radeon RX 7800 XT"
+            else:  # 12GB
+                info["model"] = "AMD Radeon RX 7700 XT"
+            return info
+
+        # Direct device ID mapping for unique IDs
+        if device_id in GPU_DEVICE_IDS:
+            info["model"] = GPU_DEVICE_IDS[device_id]
+            return info
+
+    # Priority 3: lspci model name (fallback)
+    if lspci_model:
+        if info["vendor"] == "Intel":
+            info["model"] = f"Intel {lspci_model}"
+        else:
+            info["model"] = lspci_model
+        return info
+
+    # Fallback: try to get VRAM from glxinfo if still 0
     if info["vram_mb"] == 0:
         try:
             result = subprocess.run(
