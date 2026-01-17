@@ -13,25 +13,25 @@ from typing import Optional
 # AMD GPU codename to product name mapping
 AMD_GPU_CODENAMES = {
     # RDNA 4
-    "GFX1200": "RX 9070 Series",
-    "GFX1201": "RX 9060 Series",
+    "GFX1200": "RX 9070",
+    "GFX1201": "RX 9060",
     # RDNA 3
-    "GFX1100": "RX 7900 Series",
-    "GFX1101": "RX 7800 Series",
-    "GFX1102": "RX 7600 Series",
+    "GFX1100": "RX 7900",
+    "GFX1101": "RX 7800",
+    "GFX1102": "RX 7600",
     # RDNA 2
-    "NAVI21": "RX 6800/6900 Series",
-    "NAVI22": "RX 6700 Series",
-    "NAVI23": "RX 6600 Series",
-    "NAVI24": "RX 6500/6400 Series",
+    "NAVI21": "RX 6800/6900",
+    "NAVI22": "RX 6700",
+    "NAVI23": "RX 6600",
+    "NAVI24": "RX 6500/6400",
     # RDNA 1
-    "NAVI10": "RX 5600/5700 Series",
-    "NAVI14": "RX 5500 Series",
+    "NAVI10": "RX 5600/5700",
+    "NAVI14": "RX 5500",
     # GCN
-    "HAWAII": "R9 290/390 Series",
-    "FIJI": "R9 Fury Series",
-    "POLARIS10": "RX 480/580 Series",
-    "POLARIS11": "RX 460/560 Series",
+    "HAWAII": "R9 290/390",
+    "FIJI": "R9 Fury",
+    "POLARIS10": "RX 480/580",
+    "POLARIS11": "RX 460/560",
     "VEGA10": "RX Vega 56/64",
     "VEGA20": "Radeon VII",
 }
