@@ -662,6 +662,13 @@ def login(
 
     success, message = auth_login(email, password)
 
+    # Handle 2FA if required
+    if not success and message == "2FA_REQUIRED":
+        console.print("[yellow]Two-factor authentication required.[/yellow]")
+        totp_code = typer.prompt("2FA Code (from authenticator app or backup code)")
+        console.print("[dim]Verifying...[/dim]")
+        success, message = auth_login(email, password, totp_code)
+
     if success:
         console.print(f"[bold green]{message}[/bold green]")
         status = get_status()
@@ -2013,6 +2020,12 @@ def benchmark(
                                 password = typer.prompt("Password", hide_input=True)
                                 console.print("[dim]Logging in...[/dim]")
                                 success, msg = auth_login(email, password)
+                                # Handle 2FA if required
+                                if not success and msg == "2FA_REQUIRED":
+                                    console.print("[yellow]Two-factor authentication required.[/yellow]")
+                                    totp_code = typer.prompt("2FA Code")
+                                    console.print("[dim]Verifying...[/dim]")
+                                    success, msg = auth_login(email, password, totp_code)
                                 if success:
                                     console.print(f"[green]{msg}[/green]")
                                     logged_in = True

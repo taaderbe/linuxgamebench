@@ -98,22 +98,27 @@ class TokenManager:
             self._session = AuthSession.load()
         return self._session
 
-    def login(self, email: str, password: str) -> tuple[bool, str]:
+    def login(self, email: str, password: str, totp_code: str = None) -> tuple[bool, str]:
         """
-        Login with email and password.
+        Login with email and password (CLI-specific endpoint).
 
         Args:
             email: User email address.
             password: User password.
+            totp_code: Optional 2FA code (if user enabled 2FA for CLI).
 
         Returns:
             Tuple of (success, message).
         """
         try:
             with httpx.Client(timeout=10.0) as client:
+                payload = {"email": email, "password": password}
+                if totp_code:
+                    payload["totp_code"] = totp_code
+
                 response = client.post(
-                    f"{self.base_url}/auth/login",
-                    json={"email": email, "password": password},
+                    f"{self.base_url}/auth/cli-login",
+                    json=payload,
                 )
 
                 if response.status_code == 200:
@@ -130,8 +135,11 @@ class TokenManager:
                     detail = response.json().get("detail", "Invalid credentials")
                     return False, detail
                 elif response.status_code == 403:
-                    detail = response.json().get("detail", "Account not verified")
-                    return False, detail
+                    data = response.json()
+                    detail = data.get("detail", {})
+                    if isinstance(detail, dict) and detail.get("code") == "2FA_REQUIRED":
+                        return False, "2FA_REQUIRED"
+                    return False, detail if isinstance(detail, str) else "Account not verified"
                 else:
                     detail = response.json().get("detail", "Login failed")
                     return False, f"Login failed: {detail}"
@@ -295,10 +303,10 @@ class TokenManager:
 
 
 # Convenience functions
-def login(email: str, password: str) -> tuple[bool, str]:
+def login(email: str, password: str, totp_code: str = None) -> tuple[bool, str]:
     """Login with email and password."""
     manager = TokenManager()
-    return manager.login(email, password)
+    return manager.login(email, password, totp_code)
 
 
 def logout() -> tuple[bool, str]:
