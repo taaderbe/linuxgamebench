@@ -1,6 +1,6 @@
 [project]
 name = "linux-game-benchmark"
-version = "0.1.43"
+version = "0.1.44"
 description = "Automated gaming benchmark tool for Linux - measures FPS, stutter, frame pacing and more"
 authors = [
     { name = "derbe" }

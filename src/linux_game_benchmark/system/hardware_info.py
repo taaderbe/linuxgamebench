@@ -398,7 +398,7 @@ def get_gpu_info() -> dict:
             text=True,
         )
         for line in result.stdout.split("\n"):
-            if "OpenGL version" in line:
+            if "OpenGL version" in line or "OpenGL core profile version" in line:
                 version = line.split(":")[-1].strip()
                 if "Mesa" in version:
                     info["driver"] = "Mesa"
@@ -412,6 +412,58 @@ def get_gpu_info() -> dict:
                         info["driver_version"] = match.group(1)
     except Exception:
         pass
+
+    # NVIDIA driver fallback detection (if glxinfo failed or nvidia-smi not in PATH)
+    if info["vendor"] == "NVIDIA" and not info["driver_version"]:
+        info["driver"] = "NVIDIA"
+
+        # Method 1: nvidia-smi
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                info["driver_version"] = result.stdout.strip()
+        except Exception:
+            pass
+
+        # Method 2: /proc/driver/nvidia/version
+        if not info["driver_version"]:
+            try:
+                nvidia_proc = Path("/proc/driver/nvidia/version")
+                if nvidia_proc.exists():
+                    content = nvidia_proc.read_text()
+                    match = re.search(r"Kernel Module\s+(\d+\.\d+\.\d+)", content)
+                    if match:
+                        info["driver_version"] = match.group(1)
+            except Exception:
+                pass
+
+        # Method 3: /sys/module/nvidia/version
+        if not info["driver_version"]:
+            try:
+                nvidia_sys = Path("/sys/module/nvidia/version")
+                if nvidia_sys.exists():
+                    info["driver_version"] = nvidia_sys.read_text().strip()
+            except Exception:
+                pass
+
+        # Method 4: modinfo nvidia
+        if not info["driver_version"]:
+            try:
+                result = subprocess.run(
+                    ["modinfo", "nvidia"],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode == 0:
+                    match = re.search(r"^version:\s+(\d+\.\d+\.\d+)", result.stdout, re.MULTILINE)
+                    if match:
+                        info["driver_version"] = match.group(1)
+            except Exception:
+                pass
 
     # === Step 2: Determine GPU model with priority ===
 
@@ -575,11 +627,13 @@ def get_steam_info() -> dict:
         "proton_versions": [],
     }
 
-    # Find Steam path
+    # Find Steam path (native or Flatpak)
     candidates = [
         Path.home() / ".steam" / "steam",
         Path.home() / ".steam" / "root",
         Path.home() / ".local" / "share" / "Steam",
+        # Flatpak Steam
+        Path.home() / ".var" / "app" / "com.valvesoftware.Steam" / ".steam" / "steam",
     ]
 
     for path in candidates:

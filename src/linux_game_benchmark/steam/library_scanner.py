@@ -57,11 +57,13 @@ class SteamLibraryScanner:
         self._games_cache: list[dict] = []
 
     def _find_steam_path(self) -> Path:
-        """Find Steam installation path."""
+        """Find Steam installation path (native or Flatpak)."""
         candidates = [
             Path.home() / ".steam" / "steam",
             Path.home() / ".steam" / "root",
             Path.home() / ".local" / "share" / "Steam",
+            # Flatpak Steam
+            Path.home() / ".var" / "app" / "com.valvesoftware.Steam" / ".steam" / "steam",
             Path("/opt/steam"),
         ]
 
