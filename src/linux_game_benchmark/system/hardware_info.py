@@ -465,6 +465,32 @@ def get_gpu_info() -> dict:
             except Exception:
                 pass
 
+    # AMD/Mesa driver fallback detection (if glxinfo failed to get version)
+    if info["vendor"] == "AMD" and not info["driver_version"]:
+        info["driver"] = "Mesa"
+
+        # Use vulkaninfo to get Mesa version
+        try:
+            result = subprocess.run(
+                ["vulkaninfo", "--summary"],
+                capture_output=True,
+                text=True,
+            )
+            for line in result.stdout.split("\n"):
+                # Look for driverInfo which contains "Mesa X.Y.Z-..."
+                if "driverInfo" in line:
+                    match = re.search(r"Mesa (\d+\.\d+\.\d+)", line)
+                    if match:
+                        info["driver_version"] = match.group(1)
+                        break
+                # Fallback: driverVersion field (just the version number)
+                elif "driverVersion" in line and not info["driver_version"]:
+                    match = re.search(r"=\s*(\d+\.\d+\.\d+)", line)
+                    if match:
+                        info["driver_version"] = match.group(1)
+        except Exception:
+            pass
+
     # === Step 2: Determine GPU model with priority ===
 
     # Priority 1: vulkaninfo deviceName (most accurate)
