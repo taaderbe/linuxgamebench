@@ -832,7 +832,7 @@ def settings() -> None:
                 except:
                     pass
             elif sub == "2":
-                console.print("\n[bold]Frame Generation:[/bold] Off / FSR3-FG / DLSS3-FG / AFMF / AFMF2")
+                console.print("\n[bold]Frame Generation:[/bold] None / FSR3-FG / DLSS3-FG / AFMF / AFMF2")
                 try:
                     val = typer.prompt("Value (or 'clear')", default="").strip()
                     if val.lower() == "clear":
@@ -845,7 +845,7 @@ def settings() -> None:
                 except:
                     pass
             elif sub == "3":
-                console.print("\n[bold]Anti-Aliasing:[/bold] None / Off / FXAA / SMAA / TAA / DLAA / MSAA")
+                console.print("\n[bold]Anti-Aliasing:[/bold] None / FXAA / SMAA / TAA / DLAA / MSAA")
                 try:
                     val = typer.prompt("Value (or 'clear')", default="").strip()
                     if val.lower() == "clear":
@@ -1005,7 +1005,7 @@ def settings() -> None:
             except:
                 pass
         elif choice == "5":
-            console.print("\n[bold]Ray Tracing:[/bold] Off / Low / Medium / High / Ultra / Pathtracing")
+            console.print("\n[bold]Ray Tracing:[/bold] None / Low / Medium / High / Ultra / Pathtracing")
             try:
                 val = typer.prompt("Value (or 'clear')", default="").strip()
                 if val.lower() == "clear":
@@ -1414,7 +1414,7 @@ def benchmark(
     ),
     raytracing: Optional[str] = typer.Option(
         None, "--raytracing",
-        help="Ray tracing (Off/Low/Medium/High/Ultra/Pathtracing)",
+        help="Ray tracing (None/Low/Medium/High/Ultra/Pathtracing)",
         case_sensitive=False,
     ),
     upscaling: Optional[str] = typer.Option(
@@ -1429,12 +1429,12 @@ def benchmark(
     ),
     framegen: Optional[str] = typer.Option(
         None, "--framegen",
-        help="Frame generation (Off/FSR3-FG/DLSS3-4-FG/XeSS-FG/AFMF1-3/Smooth-Motion)",
+        help="Frame generation (None/FSR3-FG/DLSS3-4-FG/XeSS-FG/AFMF1-3/Smooth-Motion)",
         case_sensitive=False,
     ),
     aa: Optional[str] = typer.Option(
         None, "--aa",
-        help="Anti-aliasing (None/Off/FXAA/SMAA/TAA/DLAA/MSAA)",
+        help="Anti-aliasing (None/FXAA/SMAA/TAA/DLAA/MSAA)",
         case_sensitive=False,
     ),
     hdr: Optional[str] = typer.Option(
