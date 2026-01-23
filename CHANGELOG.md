@@ -4,13 +4,18 @@ All notable changes to Linux Game Bench will be documented here.
 
 ## 2026-01-23
 
+### Added
+- Screenshot upload for benchmarks (Free: 1, Premium: 5 per benchmark)
+- Lightbox with keyboard navigation for screenshots
+- Like count badge on My Benchmarks cards
+- FAQ entry for driver version detection (install mesa-utils or nvidia-utils)
+
 ### Fixed
+- Like button now disabled for own benchmarks
+- iOS touch/hover issues on buttons
 - Summary row now updates FPS values when Main Filter is applied (no need to expand first)
 - Driver version detection fallback via vulkaninfo for AMD/Mesa GPUs
 - Consistent terminology: "None" instead of "Off" for game settings (RT, Frame Gen, AA)
-
-### Added
-- FAQ entry for driver version detection (install mesa-utils or nvidia-utils)
 
 ## 2026-01-22
 
