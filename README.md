@@ -25,6 +25,9 @@ Measures FPS, stutter, frame pacing and more using MangoHud.
 - Vulkan tools (`vulkaninfo`) for GPU detection
 - Python 3.10+
 
+**Optional but recommended:**
+- `mesa-utils` (AMD/Intel) or `nvidia-utils` (NVIDIA) for driver version detection
+
 
 ## Installation
 
@@ -184,10 +187,10 @@ lgb benchmark "Baldurs Gate 3" \
 | Option | Values |
 |--------|--------|
 | `--preset` | Low / Medium / High / Ultra / Custom |
-| `--raytracing` | Off / Low / Medium / High / Ultra / Pathtracing |
+| `--raytracing` | None / Low / Medium / High / Ultra / Pathtracing |
 | `--upscaling` | None / FSR1 / FSR2 / FSR3 / FSR4 / DLSS / DLSS2 / DLSS3 / DLSS3.5 / DLSS4 / DLSS4.5 / XeSS / XeSS1 / XeSS2 / TSR |
 | `--upscaling-quality` | Performance / Balanced / Quality / Ultra-Quality |
-| `--framegen` | Off / FSR3-FG / DLSS3-FG / DLSS4-FG / DLSS4-MFG / XeSS-FG / AFMF / AFMF2 / AFMF3 / Smooth-Motion |
+| `--framegen` | None / FSR3-FG / DLSS3-FG / DLSS4-FG / DLSS4-MFG / XeSS-FG / AFMF / AFMF2 / AFMF3 / Smooth-Motion |
 | `--aa` | None / FXAA / SMAA / TAA / DLAA / MSAA |
 | `--hdr` | On / Off |
 | `--vsync` | On / Off |
@@ -341,6 +344,30 @@ If this shows your GPU, you're good to go!
 1. Make sure `vulkan-tools` is installed
 2. Run `lgb check` to verify all requirements
 3. If still not working, run `lgb gpu` to see what's detected
+
+### My driver version shows as "Unknown" - what do I do?
+
+The driver version is detected using different tools depending on your GPU vendor:
+
+**AMD / Intel (Mesa driver):**
+```bash
+# Install mesa-utils for glxinfo
+sudo pacman -S mesa-utils          # Arch/CachyOS
+sudo apt install mesa-utils        # Ubuntu/Debian
+sudo dnf install mesa-demos        # Fedora
+sudo zypper install Mesa-demo-x    # openSUSE
+```
+
+**NVIDIA (proprietary driver):**
+```bash
+# nvidia-smi is usually included with the driver
+# If missing, install nvidia-utils
+sudo pacman -S nvidia-utils        # Arch/CachyOS
+sudo apt install nvidia-utils-xxx  # Ubuntu (replace xxx with version)
+sudo dnf install nvidia-driver     # Fedora
+```
+
+The tool also uses `vulkaninfo` as a fallback, so make sure `vulkan-tools` is installed.
 
 ### What does --framelimit do?
 
