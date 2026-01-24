@@ -2,6 +2,15 @@
 
 All notable changes to Linux Game Bench will be documented here.
 
+## 2026-01-24
+
+### Added
+- User Profile Pages (`/profile.html?user={username}`) - view any user's public benchmarks
+- Leaderboard Page (`/leaderboard.html`) - top viewed profiles
+- Profile View Counter (IP-based, max 1 per day)
+- Like Button on profile page benchmarks
+- Quick Stats Bar on profiles (Benchmarks, Games, GPUs, CPUs, OS)
+
 ## 2026-01-23
 
 ### Added
