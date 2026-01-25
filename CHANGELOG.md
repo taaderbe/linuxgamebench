@@ -2,6 +2,23 @@
 
 All notable changes to Linux Game Bench will be documented here.
 
+## 2026-01-25
+
+### Added
+- Comments on benchmarks - discuss and ask questions
+- Direct messaging between users
+- Friends system with friend requests
+- Block/ignore users feature
+- Achievement badges (15 different achievements)
+- Saved profiles for premium users
+- Format toolbar in messages (bold, italic, lists, emoji)
+- Notification bell for unread messages and friend requests
+- ProtonDB links on game images
+
+### Changed
+- "Comments" page renamed to "Communication" (includes Messages, Friends, Blocked tabs)
+- Premium subscription text updated to "one-time purchase"
+
 ## 2026-01-24
 
 ### Added
