@@ -2,6 +2,17 @@
 
 All notable changes to Linux Game Bench will be documented here.
 
+## 2026-01-27
+
+### Added
+- Screenshot upload for benchmarks (Free: 1, Premium: 5) - publicly visible
+- Account deletion - permanently delete your account in Settings
+- Terms of Service and Privacy Policy acceptance required for all users
+- Report screenshots and benchmarks for inappropriate content
+
+### Changed
+- Reserved usernames blocked (anonymous, admin, system, etc.)
+
 ## 2026-01-25
 
 ### Added
