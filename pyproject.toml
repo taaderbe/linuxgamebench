@@ -46,10 +46,14 @@ reports = [
     "plotly>=5.0.0",
     "jinja2>=3.0.0",
 ]
+gui = [
+    "PySide6>=6.5.0",
+]
 
 [project.scripts]
 lgb = "linux_game_benchmark.cli:app"
 linux-game-benchmark = "linux_game_benchmark.cli:app"
+lgb-gui = "linux_game_benchmark.gui:launch"
 
 [project.urls]
 Homepage = "https://github.com/derbe/linux-game-benchmark"

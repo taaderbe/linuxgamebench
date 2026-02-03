@@ -528,7 +528,7 @@ def generate_multi_resolution_report(
         details_button = ""
         if has_details:
             details_button = f'''
-                <button class="details-btn" onclick="toggleDetails('{resolution}')">
+                <button class="details-btn" onclick="toggleDetails('{resolution}', this)">
                     📊 Runs anzeigen
                 </button>'''
 
@@ -815,9 +815,9 @@ def generate_multi_resolution_report(
         const charts = {{}};
         const runsData = {json.dumps(runs_data)};
 
-        function toggleDetails(resolution) {{
+        function toggleDetails(resolution, btn) {{
             const details = document.getElementById('details-' + resolution);
-            const btn = event.target;
+            if (!details) return;
 
             if (details.style.display === 'none') {{
                 details.style.display = 'block';
@@ -1707,7 +1707,20 @@ def generate_multi_system_report(
     system_tabs = ""
     system_contents = ""
 
-    for idx, (system_id, data) in enumerate(sorted(systems_data.items())):
+    # Sort systems by newest run timestamp (newest first)
+    def get_newest_timestamp(item):
+        system_id, data = item
+        newest = ""
+        for res, runs in data.get("resolutions", {}).items():
+            for run in runs:
+                ts = run.get("timestamp", "")
+                if ts > newest:
+                    newest = ts
+        return newest
+
+    sorted_systems = sorted(systems_data.items(), key=get_newest_timestamp, reverse=True)
+
+    for idx, (system_id, data) in enumerate(sorted_systems):
         system_info = data.get("system_info", {})
         fingerprint = data.get("fingerprint", {})
         resolutions = data.get("resolutions", {})
@@ -1750,21 +1763,18 @@ def generate_multi_system_report(
                 continue
 
             runs = resolutions[resolution]
-            # Aggregate runs
-            fps_keys = ["average", "minimum", "maximum", "1_percent_low", "0.1_percent_low"]
-            fps_sums = {key: 0.0 for key in fps_keys}
-            for run in runs:
-                fps = run.get("metrics", {}).get("fps", {})
-                for key in fps_keys:
-                    fps_sums[key] += fps.get(key, 0)
             n = len(runs)
-            fps = {key: fps_sums[key] / n for key in fps_keys}
+
+            # Sort runs by timestamp (newest first) and use newest run for initial display
+            sorted_runs = sorted(runs, key=lambda r: r.get('timestamp', ''), reverse=True)
+            newest_run = sorted_runs[0] if sorted_runs else {}
+            newest_metrics = newest_run.get("metrics", {})
+            fps = newest_metrics.get("fps", {})
             fps["run_count"] = n
 
-            # Get stutter from last run
-            last_metrics = runs[-1].get("metrics", {}) if runs else {}
-            stutter = last_metrics.get("stutter", {})
-            frame_pacing = last_metrics.get("frame_pacing", {})
+            # Get stutter and pacing from newest run
+            stutter = newest_metrics.get("stutter", {})
+            frame_pacing = newest_metrics.get("frame_pacing", {})
 
             res_name = RESOLUTION_NAMES.get(resolution, resolution)
             res_display = resolution.replace("x", "×")
@@ -1786,7 +1796,7 @@ def generate_multi_system_report(
             details_button = ""
             if has_details:
                 details_button = f'''
-                    <button class="details-btn" onclick="toggleDetails('{system_id}_{resolution}')">
+                    <button class="details-btn" onclick="toggleDetails('{system_id}_{resolution}', this)">
                         📊 Runs anzeigen
                     </button>'''
 
@@ -1800,27 +1810,27 @@ def generate_multi_system_report(
                 </div>
                 <div class="res-stats">
                     <div class="stat-main">
-                        <span class="stat-value">{fps.get('average', 0):.0f}</span>
+                        <span class="stat-value" id="stat-avg-{system_id}_{resolution}">{fps.get('average', 0):.0f}</span>
                         <span class="stat-label">AVG FPS</span>
                     </div>
                     <div class="stat">
-                        <span class="stat-value">{fps.get('1_percent_low', 0):.0f}</span>
+                        <span class="stat-value" id="stat-1low-{system_id}_{resolution}">{fps.get('1_percent_low', 0):.0f}</span>
                         <span class="stat-label">1% Low</span>
                     </div>
                     <div class="stat">
-                        <span class="stat-value">{fps.get('0.1_percent_low', 0):.0f}</span>
+                        <span class="stat-value" id="stat-01low-{system_id}_{resolution}">{fps.get('0.1_percent_low', 0):.0f}</span>
                         <span class="stat-label">0.1% Low</span>
                     </div>
                     <div class="stat">
-                        <span class="stat-value stutter-{stutter_rating}">{stutter_rating.capitalize()}</span>
+                        <span class="stat-value" id="stat-stutter-{system_id}_{resolution}">{stutter_rating.capitalize()}</span>
                         <span class="stat-label">Stutter</span>
                     </div>
                     <div class="stat">
-                        <span class="stat-value consistency-{consistency_rating}">{consistency_rating.capitalize()}</span>
+                        <span class="stat-value" id="stat-consistency-{system_id}_{resolution}">{consistency_rating.capitalize()}</span>
                         <span class="stat-label">Consistency</span>
                     </div>
                     <div class="stat">
-                        <span class="stat-value recommend">{recommended_hz} Hz</span>
+                        <span class="stat-value recommend" id="stat-hz-{system_id}_{resolution}">{recommended_hz} Hz</span>
                         <span class="stat-label">Recommended</span>
                     </div>
                 </div>
@@ -2227,9 +2237,9 @@ def generate_multi_system_report(
             document.querySelector('[data-system="' + systemId + '"]').classList.add('active');
         }}
 
-        function toggleDetails(key) {{
+        function toggleDetails(key, btn) {{
             const details = document.getElementById('details-' + key);
-            const btn = event.target;
+            if (!details) return;
 
             if (details.style.display === 'none') {{
                 details.style.display = 'block';
@@ -2275,7 +2285,32 @@ def generate_multi_system_report(
             const runs = runsData[key] || [];
             const run = runs[runIndex];
 
-            if (!run || !run.frametimes) return;
+            if (!run) return;
+
+            // Update stat values with selected run's data
+            const fps = run.metrics?.fps || {{}};
+            const stutter = run.metrics?.stutter || {{}};
+            const pacing = run.metrics?.frame_pacing || {{}};
+
+            const avgEl = document.getElementById('stat-avg-' + key);
+            const low1El = document.getElementById('stat-1low-' + key);
+            const low01El = document.getElementById('stat-01low-' + key);
+            const stutterEl = document.getElementById('stat-stutter-' + key);
+            const consistEl = document.getElementById('stat-consistency-' + key);
+            const hzEl = document.getElementById('stat-hz-' + key);
+
+            if (avgEl) avgEl.textContent = (fps.average || 0).toFixed(0);
+            if (low1El) low1El.textContent = (fps['1_percent_low'] || 0).toFixed(0);
+            if (low01El) low01El.textContent = (fps['0.1_percent_low'] || 0).toFixed(0);
+            if (stutterEl) stutterEl.textContent = (stutter.stutter_rating || 'unknown').charAt(0).toUpperCase() + (stutter.stutter_rating || 'unknown').slice(1);
+            if (consistEl) consistEl.textContent = (pacing.consistency_rating || 'unknown').charAt(0).toUpperCase() + (pacing.consistency_rating || 'unknown').slice(1);
+            if (hzEl) {{
+                const avgFps = fps.average || 60;
+                const hz = avgFps >= 144 ? 165 : avgFps >= 100 ? 144 : avgFps >= 55 ? 60 : 30;
+                hzEl.textContent = hz + ' Hz';
+            }}
+
+            if (!run.frametimes) return;
 
             const ctx = document.getElementById('chart-' + key);
 
@@ -2284,7 +2319,7 @@ def generate_multi_system_report(
             }}
 
             const frametimes = run.frametimes;
-            const fps = frametimes.map(ft => 1000.0 / ft);
+            const fpsValues = frametimes.map(ft => 1000.0 / ft);
             const labels = frametimes.map((_, i) => (i * 10 / 60).toFixed(1));
 
             charts[key] = new Chart(ctx, {{
@@ -2293,7 +2328,7 @@ def generate_multi_system_report(
                     labels: labels,
                     datasets: [{{
                         label: 'FPS',
-                        data: fps,
+                        data: fpsValues,
                         borderColor: '#4fc3f7',
                         backgroundColor: 'rgba(79, 195, 247, 0.1)',
                         borderWidth: 2,
@@ -2330,6 +2365,76 @@ def generate_multi_system_report(
                 }}
             }});
         }}
+
+        // Handle URL hash to activate correct system tab and select run on page load
+        document.addEventListener('DOMContentLoaded', function() {{
+            const hash = window.location.hash;
+            if (hash && hash.startsWith('#run-select-')) {{
+                // Parse hash: #run-select-SYSTEMID_RESOLUTION@TIMESTAMP
+                // Example: #run-select-CachyOS_37122738_2560x1440@2026-01-15T10-30-00
+                const hashContent = hash.substring(12);  // Remove '#run-select-'
+                const atIndex = hashContent.indexOf('@');
+                let keyPart = hashContent;
+                let timestamp = null;
+
+                if (atIndex > 0) {{
+                    keyPart = hashContent.substring(0, atIndex);
+                    // Restore timestamp: 2026-01-04T15-35-05 -> 2026-01-04T15:35:05
+                    // Only replace dashes after T (in time part) back to colons
+                    const rawTs = hashContent.substring(atIndex + 1);
+                    const tIdx = rawTs.indexOf('T');
+                    if (tIdx > 0) {{
+                        const datePart = rawTs.substring(0, tIdx + 1);  // Include T
+                        const timePart = rawTs.substring(tIdx + 1).replace(/-/g, ':');
+                        timestamp = datePart + timePart;
+                    }} else {{
+                        timestamp = rawTs;  // No T found, use as-is
+                    }}
+                }}
+
+                const parts = keyPart.split('_');
+                if (parts.length >= 2) {{
+                    // Reconstruct system ID (e.g., CachyOS_37122738)
+                    const systemId = parts[0] + '_' + parts[1];
+                    showSystem(systemId);
+
+                    // After showing system, open details and select the run
+                    setTimeout(function() {{
+                        // Find and click the details button to open the panel
+                        const detailsBtn = document.querySelector(
+                            '#system-' + systemId + ' .details-btn[onclick*="' + keyPart + '"]'
+                        );
+                        if (detailsBtn) {{
+                            detailsBtn.click();
+
+                            // If timestamp provided, select the matching run in dropdown
+                            if (timestamp) {{
+                                setTimeout(function() {{
+                                    const select = document.getElementById('run-select-' + keyPart);
+                                    if (select && runsData[keyPart]) {{
+                                        const runs = runsData[keyPart];
+                                        for (let i = 0; i < runs.length; i++) {{
+                                            // Compare timestamps (allow partial match)
+                                            if (runs[i].timestamp && runs[i].timestamp.startsWith(timestamp.substring(0, 19))) {{
+                                                select.value = i;
+                                                updateChart(keyPart);
+                                                break;
+                                            }}
+                                        }}
+                                    }}
+                                }}, 100);
+                            }}
+                        }}
+
+                        // Scroll to the section
+                        const element = document.getElementById('run-select-' + keyPart);
+                        if (element) {{
+                            element.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+                        }}
+                    }}, 100);
+                }}
+            }}
+        }});
     </script>
 </head>
 <body>

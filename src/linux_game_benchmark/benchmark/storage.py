@@ -316,7 +316,8 @@ class BenchmarkStorage:
         if log_path and log_path.exists():
             shutil.copy2(log_path, res_dir / f"run_{run_num:03d}.csv")
 
-        # Auto-regenerate overview report
+        # Auto-regenerate reports
+        self.regenerate_game_report(game_id)
         self.regenerate_overview_report()
 
         return run_file
@@ -509,6 +510,39 @@ class BenchmarkStorage:
     def get_report_path(self, game_id: Union[int, str]) -> Path:
         """Get path for the HTML report."""
         return self.get_game_dir(game_id) / "report.html"
+
+    def regenerate_game_report(self, game_id: Union[int, str]) -> Optional[Path]:
+        """
+        Regenerate the HTML report for a specific game.
+
+        Returns:
+            Path to generated report, or None if failed
+        """
+        try:
+            from linux_game_benchmark.analysis.report_generator import generate_multi_system_report
+
+            systems_data = self.get_all_systems_data(game_id)
+            if not systems_data:
+                return None
+
+            display_name = self.get_game_display_name(game_id)
+
+            # Extract app_id if it's a steam game
+            app_id = None
+            if isinstance(game_id, int):
+                app_id = game_id
+            elif isinstance(game_id, str) and game_id.startswith("steam_"):
+                try:
+                    app_id = int(game_id.replace("steam_", ""))
+                except ValueError:
+                    pass
+
+            output_path = self.get_report_path(game_id)
+            generate_multi_system_report(display_name, app_id, systems_data, output_path)
+            return output_path
+        except Exception:
+            # Silently fail - report generation is not critical
+            return None
 
     def get_game_display_name(self, game_id: Union[int, str]) -> str:
         """

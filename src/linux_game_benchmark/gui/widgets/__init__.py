@@ -1,0 +1,1 @@
+"""GUI widgets (reusable components)."""

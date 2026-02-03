@@ -16,6 +16,7 @@ class Preferences:
         "default_resolution": "2",  # FHD
         "default_upload": "y",
         "default_continue": "c",
+        "default_duration": 30,  # seconds
         "gpu_preference": None,  # PCI address of preferred GPU
         "gpu_display_name": None,  # Display name for preferred GPU
         # Game Settings Defaults
@@ -116,6 +117,18 @@ class Preferences:
         """Set default continue choice."""
         if value.lower() in ("c", "e"):
             self._prefs["default_continue"] = value.lower()
+            self._save()
+
+    @property
+    def duration(self) -> int:
+        """Get default benchmark duration in seconds."""
+        return self._prefs.get("default_duration", 30)
+
+    @duration.setter
+    def duration(self, value: int) -> None:
+        """Set default benchmark duration (30-300 seconds)."""
+        if 30 <= value <= 300:
+            self._prefs["default_duration"] = value
             self._save()
 
     @property

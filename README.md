@@ -74,11 +74,55 @@ sudo zypper install mangohud vulkan-tools python313-pipx
 pipx install git+https://github.com/taaderbe/linuxgamebench.git
 ```
 
+### Optional: Install the GUI
+
+Linux Game Bench also offers an optional graphical interface built with PySide6 (Qt6). If you already installed the CLI, add the GUI like this:
+
+**Arch Linux / Manjaro / CachyOS:**
+```bash
+pipx inject linux-game-benchmark PySide6
+```
+
+**Ubuntu / Debian / Pop!_OS:**
+```bash
+pipx inject linux-game-benchmark PySide6
+```
+
+**Fedora:**
+```bash
+pipx inject linux-game-benchmark PySide6
+```
+
+**openSUSE:**
+```bash
+pipx inject linux-game-benchmark PySide6
+```
+
+**Or install CLI + GUI together (fresh install):**
+```bash
+pipx install "linux-game-benchmark[gui]" git+https://github.com/taaderbe/linuxgamebench.git
+```
+
+**Launch the GUI:**
+```bash
+lgb-gui
+```
+
+The GUI provides the same features as the CLI: scan games, configure settings, run benchmarks, view results, and upload to the community database.
+
+![Linux Game Bench GUI](docs/gui-screenshot.png)
+
 ### Update to Latest Version
 
 ```bash
 pipx uninstall linux-game-benchmark
 pipx install git+https://github.com/taaderbe/linuxgamebench.git
+```
+
+**Update with GUI:**
+```bash
+pipx uninstall linux-game-benchmark
+pipx install "linux-game-benchmark[gui]" git+https://github.com/taaderbe/linuxgamebench.git
 ```
 
 ### Install from Source (Development)
@@ -236,6 +280,7 @@ xdg-open ~/benchmark_results/index.html
 | `lgb login` | Login to your account |
 | `lgb logout` | Logout from your account |
 | `lgb status` | Show login status and account info |
+| `lgb-gui` | Launch graphical interface (requires PySide6) |
 
 ## Metrics
 

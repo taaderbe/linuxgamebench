@@ -214,6 +214,43 @@ class BenchmarkAPIClient:
                 error=f"Unexpected error: {e}"
             )
 
+    def get_user_benchmarks(self, include_details: bool = False) -> Dict[str, Any]:
+        """
+        Get all benchmarks for the current authenticated user.
+
+        Args:
+            include_details: If True, includes frametimes and hardware data.
+
+        Returns:
+            Dict with username, benchmarks list, and stats.
+        """
+        from linux_game_benchmark.api.auth import is_logged_in
+
+        if not is_logged_in():
+            return {"error": "Not logged in", "benchmarks": [], "stats": {}}
+
+        try:
+            params = {}
+            if include_details:
+                params["include_details"] = "true"
+
+            with httpx.Client(timeout=self.timeout) as client:
+                response = client.get(
+                    f"{self.base_url}/auth/my-benchmarks",
+                    headers=self._get_headers(),
+                    params=params,
+                )
+
+                if response.status_code == 200:
+                    return response.json()
+                elif response.status_code == 401:
+                    return {"error": "Session expired", "benchmarks": [], "stats": {}}
+                else:
+                    return {"error": f"Failed ({response.status_code})", "benchmarks": [], "stats": {}}
+
+        except Exception as e:
+            return {"error": str(e), "benchmarks": [], "stats": {}}
+
     def get_game_benchmarks(self, steam_app_id: int) -> Dict[str, Any]:
         """
         Get all benchmarks for a specific game.
@@ -315,6 +352,12 @@ def check_for_updates() -> Optional[str]:
     """Check if a newer client version is available."""
     client = BenchmarkAPIClient()
     return client.check_for_updates()
+
+
+def get_user_benchmarks(include_details: bool = False) -> Dict[str, Any]:
+    """Get user's benchmarks from server."""
+    client = BenchmarkAPIClient()
+    return client.get_user_benchmarks(include_details)
 
 
 def verify_auth() -> tuple[bool, Optional[str]]:
