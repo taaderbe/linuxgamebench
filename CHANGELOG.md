@@ -2,6 +2,36 @@
 
 All notable changes to Linux Game Bench will be documented here.
 
+## 2026-02-03
+
+### Added
+- **PySide6 GUI** - Optional graphical interface for Linux Game Bench
+  - Games library view with Steam game scanning
+  - Benchmark view with settings profiles (save/load per game)
+  - My Benchmarks view for local results
+  - System Info view
+  - Settings view with UI scale support
+  - Login/Logout with 2FA support
+  - Dark gaming theme
+- GUI installation instructions added to FAQ (EN/DE)
+- GUI installation section added to README
+
+### Installation
+```bash
+# New install with GUI:
+pipx install "linux-game-benchmark[gui]" git+https://github.com/taaderbe/linuxgamebench.git
+
+# Add GUI to existing install:
+pipx inject linux-game-benchmark PySide6
+
+# Launch:
+lgb-gui
+```
+
+### Fixed
+- HTML report "Runs anzeigen" button not working
+- HTML report hash navigation to open specific runs
+
 ## 2026-01-27
 
 ### Added
