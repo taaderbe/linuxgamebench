@@ -2,6 +2,20 @@
 
 All notable changes to Linux Game Bench will be documented here.
 
+## 2026-05-06
+
+### Added
+- **GUI Quick-Access Button** - "Use the GUI" button in the homepage hero next to "Install CLI", linking directly to the GUI install section in the FAQ
+
+### Fixed
+- **OS Filter Duplicates** - Fedora, Ubuntu and other distros no longer appear multiple times in the OS dropdown; selecting one matches all versions
+- **Gentoo Display Name** - Gentoo no longer shows up with surrounding quotes (`'Gentoo'`) in the OS filter and detail view
+- **Kernel & Mesa Sort Order** - Kernel and Mesa dropdowns now list the newest version first, with a proper version-aware sort so `6.18.x` ranks above `6.5.x`
+- **Missing Game Images** - Recently released titles (e.g. Resident Evil Requiem, Assetto Corsa Rally, Where Winds Meet, Edge of Destruction, PowerWash Simulator 2) now display correctly across the trending feed, profile, comments, GPU/CPU pages and "My Benchmarks" lists
+
+### Removed
+- **FAQ Video Tutorial Placeholder** - Removed the "coming soon" video section from the FAQ (EN/DE)
+
 ## 2026-03-02
 
 ### Added
