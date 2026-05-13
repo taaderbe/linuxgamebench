@@ -2,6 +2,20 @@
 
 All notable changes to Linux Game Bench will be documented here.
 
+## 2026-05-13
+
+### Fixed
+- **Like Button** - More reliable behaviour when clicked quickly
+- **Screenshot Upload Limit** - Now enforced correctly under all upload conditions
+- **Chart Data Decoding** - Better error handling for frametime and hardware chart data
+
+### Changed
+- **2FA Recovery Codes** - Strengthened (existing codes keep working)
+- **Web Security Headers** - Hardened across all pages
+- **User Content Escaping** - Improved on community pages
+- **My Benchmarks & Profile Pages** - Noticeably faster, especially on accounts with many uploads
+- **Database** - Now runs in WAL mode for better behaviour under simultaneous reads and writes
+
 ## 2026-05-06
 
 ### Added
