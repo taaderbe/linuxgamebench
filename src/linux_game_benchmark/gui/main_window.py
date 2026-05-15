@@ -30,7 +30,8 @@ NAV_ITEMS = [
     ("\U0001F3AF", "Benchmark"),      # index 1
     ("\U0001F4CA", "My Benchmarks"),  # index 2
     ("\U0001F5A5", "System Info"),    # index 3
-    ("\u2699",     "Settings"),       # index 4
+    ("\U0001F579", "Steam Deck"),     # index 4 - joystick glyph
+    ("\u2699",     "Settings"),       # index 5
 ]
 
 
@@ -74,12 +75,13 @@ class MainWindow(QMainWindow):
         # Add views
         from linux_game_benchmark.gui.views import (
             GamesView, BenchmarkView, MyBenchmarksView,
-            SystemInfoView, SettingsView,
+            SystemInfoView, SteamDeckView, SettingsView,
         )
         self._stack.addWidget(GamesView())
         self._stack.addWidget(BenchmarkView())
         self._stack.addWidget(MyBenchmarksView())
         self._stack.addWidget(SystemInfoView())
+        self._stack.addWidget(SteamDeckView())
         self._stack.addWidget(SettingsView())
 
         # Select first tab
@@ -239,8 +241,8 @@ class MainWindow(QMainWindow):
     # --- Keyboard Shortcuts ---
 
     def _setup_shortcuts(self):
-        # Ctrl+1-5 for tab navigation
-        for i in range(min(5, len(NAV_ITEMS))):
+        # Ctrl+1-9 for tab navigation (covers the current ~6 nav items)
+        for i in range(min(9, len(NAV_ITEMS))):
             shortcut = QShortcut(QKeySequence(f"Ctrl+{i + 1}"), self)
             shortcut.activated.connect(lambda idx=i: self._select_nav(idx))
 
