@@ -2,6 +2,12 @@
 
 All notable changes to Linux Game Bench will be documented here.
 
+## 2026-05-16
+
+### Fixed
+- **Kernel & Mesa Version** - Each run now records its own kernel/Mesa version instead of inheriting frozen values from the first run on that system
+- **Settings Badges** - Summary row badges now refresh when switching between runs in the same benchmark group
+
 ## 2026-05-13
 
 ### Fixed
