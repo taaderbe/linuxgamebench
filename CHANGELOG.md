@@ -2,6 +2,17 @@
 
 All notable changes to Linux Game Bench will be documented here.
 
+## 2026-06-05
+
+### Added
+- Recently-uploaded benchmarks now show their graphics driver (Mesa/NVIDIA) as a ribbon.
+
+### Fixed
+- Screenshots appear immediately after upload.
+
+### Changed
+- Faster, more reliable page loads.
+
 ## 2026-05-16
 
 ### Fixed
