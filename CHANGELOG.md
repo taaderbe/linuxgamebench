@@ -2,6 +2,23 @@
 
 All notable changes to Linux Game Bench will be documented here.
 
+## 2026-06-30
+
+### Added
+- **Personalized GPU banner** on the homepage — detects your graphics card and invites you to contribute the first benchmark for it (NVIDIA / AMD / Intel)
+
+### Changed
+- **Mobile homepage overhaul** — much nicer to use on phones:
+  - Filter bar trimmed to GPU + Game, with the rest tucked behind a "More filters" toggle
+  - Each benchmark now shows a full-width game banner; tap it to expand
+  - Cleaner card layout (game name, settings badges, and FPS/rating on their own rows)
+  - Bigger tap targets and more breathing room in the expanded benchmark view
+
+### Fixed
+- **Trending feed on touch devices** — the "Recently Uploaded" row was stuck on phones; it's now swipeable with prev/next arrows
+- Tapping a trending card now opens the matching benchmark directly instead of the game overview page
+- The benchmark info (ⓘ) popup no longer runs off the edge of the screen on mobile
+
 ## 2026-06-05
 
 ### Added
