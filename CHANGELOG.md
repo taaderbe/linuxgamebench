@@ -2,6 +2,18 @@
 
 All notable changes to Linux Game Bench will be documented here.
 
+## 2026-07-08
+
+### Fixed
+- **Benchmarks for games with a "/" in their name** (e.g. *SHENZHEN I/O*) now open correctly — the frametime & hardware charts and the uploader name were failing to load, leaving the entry looking empty with "User: -".
+- **Clearer "No GPU sensor data" notice** — when MangoHud couldn't read the GPU sensors (load, clock, temperature and power all logged as zero), the benchmark used to show an empty/flat GPU chart; it now says *"No GPU sensor data"* in both the stats and the chart area.
+- **Graphics driver label** in the benchmark details now correctly shows *NVIDIA* or *Mesa* (NVIDIA drivers were sometimes labelled "Mesa").
+- **Amazon buy icons** next to the GPU/CPU no longer disappear once a benchmark finishes loading.
+- The ⓘ info icon in the benchmark details is visible again on desktop.
+
+### Added
+- **"Support without paying"** in the footer — opens the newest benchmark and highlights the Amazon buy icons, so you can support the site for free by ordering anything through those links.
+
 ## 2026-06-30
 
 ### Added
