@@ -2,6 +2,12 @@
 
 All notable changes to Linux Game Bench will be documented here.
 
+## 2026-07-09
+
+### Added
+- **Compare GPUs** — pick two graphics cards on the homepage and see their Linux gaming FPS side by side across every game both were benchmarked on: visual FPS bars, switchable metric (Avg / 1% Low / 0.1% Low / combined), resolution & game filters, and an overall "X% faster" verdict. The second picker only offers cards that actually share benchmarks with your first choice.
+- **Shareable comparison pages** — every matchup has its own link, e.g. `/compare/gpu/RX 6800-vs-RX 9070`.
+
 ## 2026-07-08
 
 ### Fixed
