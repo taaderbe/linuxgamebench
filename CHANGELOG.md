@@ -2,6 +2,12 @@
 
 All notable changes to Linux Game Bench will be documented here.
 
+## 2026-07-10
+
+### Added
+- **Performance History** (📈 in your user menu) — did your PC get faster? Pick one of your games, tick the runs you want to compare, and see your FPS over time: an Avg / 1% Low / 0.1% Low chart plus change chips showing what happened between runs — driver updates, kernel updates, settings, resolution, even GPU swaps ("Driver 25.3.3 → 25.4.0: +8%"). Needs at least 2 benchmarks of the same game.
+- **Download your benchmarks** (⭐ premium and up) — a new Download action below "Expand" in My Benchmarks exports any of your own benchmarks as JSON (all stats, settings and frametimes) or as the original raw MangoHud CSV log.
+
 ## 2026-07-09
 
 ### Added
