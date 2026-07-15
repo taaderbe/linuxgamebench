@@ -2,6 +2,12 @@
 
 All notable changes to Linux Game Bench will be documented here.
 
+## 2026-07-15
+
+### Fixed
+- **Frametime chart no longer gets stuck on "No frametime data available"** — selecting a benchmark without frametime data used to break the chart for every benchmark you picked afterwards.
+- Hidden benchmarks no longer show up in the Main/Compare benchmark lists.
+
 ## 2026-07-10
 
 ### Added
