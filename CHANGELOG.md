@@ -2,6 +2,17 @@
 
 All notable changes to Linux Game Bench will be documented here.
 
+## 2026-08-23
+
+### Added
+- **GUI as AppImage download** — the FAQ now offers the Linux Game Bench GUI as a portable AppImage (~130 MB, x86_64): download, `chmod +x`, run. No terminal or pipx needed. MangoHud still has to be installed on your system.
+- **Video guide on the FAQ page** — the FAQ can now show an embedded YouTube walkthrough at the top (English and German tabs).
+- **Edit your benchmark comment after upload** — the public comment on your benchmarks (e.g. "recorded with OBS running") can now be added or changed any time in My Benchmarks, just like private notes and game settings.
+- **FAQ: how to update** — new entry explaining `pipx upgrade linux-game-benchmark` (plus the PySide6 re-inject for GUI users).
+
+### Fixed
+- **Security:** benchmark comments are now HTML-escaped on profile pages and in the liked-benchmarks view (stored-XSS hardening).
+
 ## 2026-07-15
 
 ### Fixed
