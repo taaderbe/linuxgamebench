@@ -283,6 +283,8 @@ class BenchmarkResults(QWidget):
             "scheduler": si.get("scheduler"),
             "gpu_device_id": si.get("gpu", {}).get("device_id"),
             "gpu_lspci_raw": si.get("gpu", {}).get("lspci_raw"),
+            # Detected by AnalyzeWorker right after recording (game still running)
+            **(self._metrics.get("_proton") or {}),
         }
 
         # Compress MangoHud log

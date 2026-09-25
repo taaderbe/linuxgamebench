@@ -710,15 +710,33 @@ def scan(
         None,
         "--steam-path",
         "-s",
-        help="Path to Steam installation (auto-detected if not specified)",
+        help="Path to Steam installation (auto-detected if not specified). "
+             "Saved permanently for all lgb commands.",
+    ),
+    reset_steam_path: bool = typer.Option(
+        False,
+        "--reset-steam-path",
+        help="Forget the saved Steam path and auto-detect again",
     ),
 ) -> None:
     """
     Scan Steam library for installed games.
 
-    Finds all installed Steam games and caches the information.
+    Finds all installed Steam games. A path given with --steam-path is saved
+    to ~/.config/lgb/config.json and used by every lgb command afterwards.
     """
-    from linux_game_benchmark.steam.library_scanner import SteamLibraryScanner
+    from linux_game_benchmark.config.settings import settings
+    from linux_game_benchmark.steam.library_scanner import SteamLibraryScanner, is_steam_dir
+
+    if reset_steam_path:
+        settings.clear_steam_path()
+        console.print("[green]Saved Steam path removed - auto-detection is used again.[/green]")
+
+    if steam_path:
+        steam_path = steam_path.expanduser().resolve()
+        if not is_steam_dir(steam_path):
+            console.print(f"[red]Not a Steam installation (no 'steamapps' folder): {steam_path}[/red]")
+            raise typer.Exit(1)
 
     console.print("[bold]Scanning Steam library...[/bold]")
 
@@ -727,6 +745,11 @@ def scan(
         games = scanner.scan()
 
         console.print(f"\n[green]Found {len(games)} installed games.[/green]")
+
+        if steam_path:
+            settings.set_steam_path(str(steam_path))
+            console.print(f"[green]Steam path saved:[/green] {steam_path}")
+            console.print(f"[dim]({settings.CONFIG_FILE} - used by all lgb commands)[/dim]")
 
         # Show games with builtin benchmarks
         builtin = [g for g in games if g.get("has_builtin_benchmark")]
@@ -760,13 +783,11 @@ def list_games(
     """
     from linux_game_benchmark.steam.library_scanner import SteamLibraryScanner
 
-    scanner = SteamLibraryScanner()
-
     try:
+        scanner = SteamLibraryScanner()
         games = scanner.scan()
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
-        console.print("Run 'lgb scan' first to scan your Steam library.")
         raise typer.Exit(1)
 
     # Apply filters
@@ -1250,9 +1271,12 @@ def benchmark(
         console.print("Install with: sudo pacman -S mangohud (Arch) or apt install mangohud (Debian/Ubuntu)")
         raise typer.Exit(1)
 
+    # Session start: a Proton prefix written after this belongs to this session
+    session_start = time.time()
+
     # Find the game
-    scanner = SteamLibraryScanner()
     try:
+        scanner = SteamLibraryScanner()
         games = scanner.scan()
     except Exception as e:
         console.print(f"[red]Error scanning Steam library: {e}[/red]")
@@ -1454,6 +1478,9 @@ def benchmark(
         # (scheduler might only be active during gaming)
         from linux_game_benchmark.system.hardware_info import detect_sched_ext
         scheduler = detect_sched_ext()
+        # Proton build: detected now as well, the prefix is still in use
+        from linux_game_benchmark.steam.proton_detect import detect_proton
+        proton_info = detect_proton(steam_app_id, since=session_start)
 
         console.print(f"\n[bold green]═══ Recording complete! ═══[/bold green]")
 
@@ -1642,6 +1669,7 @@ def benchmark(
                                 "scheduler": scheduler,
                                 "gpu_device_id": selected_system_info.get("gpu", {}).get("device_id"),
                                 "gpu_lspci_raw": selected_system_info.get("gpu", {}).get("lspci_raw"),
+                                **proton_info,
                             },
                             metrics={
                                 "fps_avg": fps.get('average', 0),
@@ -1721,6 +1749,7 @@ def benchmark(
                                         "scheduler": scheduler,
                                         "gpu_device_id": selected_system_info.get("gpu", {}).get("device_id"),
                                         "gpu_lspci_raw": selected_system_info.get("gpu", {}).get("lspci_raw"),
+                                        **proton_info,
                                     },
                                     metrics={
                                         "fps_avg": fps.get('average', 0),

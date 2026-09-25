@@ -653,19 +653,11 @@ def get_steam_info() -> dict:
         "proton_versions": [],
     }
 
-    # Find Steam path (native or Flatpak)
-    candidates = [
-        Path.home() / ".steam" / "steam",
-        Path.home() / ".steam" / "root",
-        Path.home() / ".local" / "share" / "Steam",
-        # Flatpak Steam
-        Path.home() / ".var" / "app" / "com.valvesoftware.Steam" / ".steam" / "steam",
-    ]
-
-    for path in candidates:
-        if path.exists() and (path / "steamapps").exists():
-            info["path"] = str(path)
-            break
+    # Find Steam path (native, Flatpak, Snap or saved via --steam-path)
+    from linux_game_benchmark.steam.library_scanner import find_steam_path
+    detected = find_steam_path()
+    if detected:
+        info["path"] = str(detected)
 
     if not info["path"]:
         return info

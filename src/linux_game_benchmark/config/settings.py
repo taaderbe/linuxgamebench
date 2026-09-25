@@ -113,6 +113,23 @@ class Settings:
             del config["default_gpu_pci"]
             self._save_config(config)
 
+    def get_steam_path(self) -> Optional[str]:
+        """Get the saved Steam installation path (set via 'lgb scan --steam-path')."""
+        return self._load_config().get("steam_path")
+
+    def set_steam_path(self, path: str) -> None:
+        """Save the Steam installation path so every command finds it."""
+        config = self._load_config()
+        config["steam_path"] = path
+        self._save_config(config)
+
+    def clear_steam_path(self) -> None:
+        """Forget the saved Steam path (back to auto-detection)."""
+        config = self._load_config()
+        if "steam_path" in config:
+            del config["steam_path"]
+            self._save_config(config)
+
 
 # Singleton instance
 settings = Settings()

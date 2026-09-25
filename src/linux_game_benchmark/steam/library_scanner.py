@@ -24,12 +24,13 @@ GAMES_WITH_BUILTIN_BENCHMARK = {
 # Steam runtime and tools to exclude from game list
 EXCLUDED_APP_IDS = {
     228980,   # Steamworks Common Redistributables
-    1070560,  # Steam Linux Runtime
+    1070560,  # Steam Linux Runtime 1.0 (scout)
     1391110,  # Steam Linux Runtime 2.0 (soldier)
     1628350,  # Steam Linux Runtime 3.0 (sniper)
-    2180100,  # Steam Linux Runtime 1.0 (scout)
+    4183110,  # Steam Linux Runtime 4.0
     1493710,  # Proton Experimental
-    2805730,  # Proton Hotfix
+    2180100,  # Proton Hotfix
+    2805730,  # Proton 9.0
     961940,   # Proton 3.7
     1054830,  # Proton 4.2
     1113280,  # Proton 4.11
@@ -41,6 +42,64 @@ EXCLUDED_APP_IDS = {
     2180110,  # Proton EasyAntiCheat Runtime
     1826330,  # Proton BattlEye Runtime
 }
+
+# Steam ships new Proton/runtime versions under new App IDs regularly, so
+# tools are also recognised by their manifest name.
+EXCLUDED_NAME_PATTERN = re.compile(
+    r"^(Proton (\d|Experimental|Hotfix|EasyAntiCheat|BattlEye|- )"
+    r"|Steam Linux Runtime"
+    r"|Steamworks Common Redistributables)"
+)
+
+# Known Steam install locations: native, Flatpak and Snap.
+STEAM_PATH_CANDIDATES = [
+    Path.home() / ".steam" / "steam",
+    Path.home() / ".steam" / "root",
+    Path.home() / ".local" / "share" / "Steam",
+    # Flatpak Steam
+    Path.home() / ".var" / "app" / "com.valvesoftware.Steam" / ".steam" / "steam",
+    Path.home() / ".var" / "app" / "com.valvesoftware.Steam" / ".local" / "share" / "Steam",
+    # Snap Steam (Ubuntu)
+    Path.home() / "snap" / "steam" / "common" / ".local" / "share" / "Steam",
+    Path.home() / "snap" / "steam" / "common" / ".steam" / "steam",
+    Path("/opt/steam"),
+]
+
+
+def is_steam_dir(path: Path) -> bool:
+    """True if path looks like a Steam installation (has a steamapps folder)."""
+    try:
+        return path.is_dir() and (path / "steamapps").is_dir()
+    except OSError:
+        return False
+
+
+def find_steam_path() -> Optional[Path]:
+    """
+    Find the Steam installation.
+
+    Order: LGB_STEAM_PATH env var > path saved via 'lgb scan --steam-path'
+    > known install locations (native, Flatpak, Snap).
+    """
+    import os
+    from linux_game_benchmark.config.settings import settings
+
+    configured = [os.environ.get("LGB_STEAM_PATH"), settings.get_steam_path()]
+    for value in configured:
+        if value:
+            path = Path(value).expanduser()
+            if is_steam_dir(path):
+                return path
+
+    for path in STEAM_PATH_CANDIDATES:
+        if is_steam_dir(path):
+            return path
+    return None
+
+
+def is_excluded_tool(app_id: int, name: str) -> bool:
+    """True for Proton, Steam runtimes and redistributables (not games)."""
+    return app_id in EXCLUDED_APP_IDS or bool(EXCLUDED_NAME_PATTERN.match(name))
 
 
 class SteamLibraryScanner:
@@ -57,23 +116,15 @@ class SteamLibraryScanner:
         self._games_cache: list[dict] = []
 
     def _find_steam_path(self) -> Path:
-        """Find Steam installation path (native or Flatpak)."""
-        candidates = [
-            Path.home() / ".steam" / "steam",
-            Path.home() / ".steam" / "root",
-            Path.home() / ".local" / "share" / "Steam",
-            # Flatpak Steam
-            Path.home() / ".var" / "app" / "com.valvesoftware.Steam" / ".steam" / "steam",
-            Path("/opt/steam"),
-        ]
-
-        for path in candidates:
-            if path.exists() and (path / "steamapps").exists():
-                return path
+        """Find Steam installation path (native, Flatpak or Snap)."""
+        path = find_steam_path()
+        if path:
+            return path
 
         raise FileNotFoundError(
             "Steam installation not found. "
-            "Please specify path with --steam-path"
+            "Run 'lgb scan --steam-path /path/to/Steam' once - the path is saved "
+            "and used by all lgb commands."
         )
 
     def scan(self) -> list[dict]:
@@ -89,7 +140,7 @@ class SteamLibraryScanner:
         for steamapps_dir in steamapps_dirs:
             for manifest_file in steamapps_dir.glob("appmanifest_*.acf"):
                 game = self._parse_manifest(manifest_file)
-                if game and game["app_id"] not in EXCLUDED_APP_IDS:
+                if game and not is_excluded_tool(game["app_id"], game["name"]):
                     # Deduplicate by app_id
                     if game["app_id"] not in games_by_id:
                         games_by_id[game["app_id"]] = game

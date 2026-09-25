@@ -274,17 +274,24 @@ class AnalyzeWorker(QThread):
     finished = Signal(dict)   # metrics dict from FrametimeAnalyzer.analyze()
     error = Signal(str)
 
-    def __init__(self, log_path: str, parent=None):
+    def __init__(self, log_path: str, app_id: int = 0,
+                 session_start: Optional[float] = None, parent=None):
         super().__init__(parent)
         self._log_path = Path(log_path)
+        self._app_id = app_id
+        self._session_start = session_start
 
     def run(self):
         try:
             from linux_game_benchmark.analysis.metrics import FrametimeAnalyzer
+            from linux_game_benchmark.steam.proton_detect import detect_proton
+            # Proton build first - the game (and its prefix) is still running
+            proton = detect_proton(self._app_id, since=self._session_start)
             analyzer = FrametimeAnalyzer(self._log_path)
             metrics = analyzer.analyze()
             # Attach raw frametimes for upload (server needs them)
             metrics["_frametimes"] = getattr(analyzer, "frametimes", [])
+            metrics["_proton"] = proton
             self.finished.emit(metrics)
         except Exception as e:
             self.error.emit(str(e))

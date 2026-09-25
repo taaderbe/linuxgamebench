@@ -12,11 +12,16 @@ from typing import Optional
 
 def find_localconfig() -> Optional[Path]:
     """Find Steam's localconfig.vdf file."""
-    steam_paths = [
-        Path.home() / ".local" / "share" / "Steam",
-        Path.home() / ".steam" / "steam",
-        Path.home() / ".steam" / "root",
-    ]
+    from linux_game_benchmark.steam.library_scanner import (
+        STEAM_PATH_CANDIDATES, find_steam_path,
+    )
+
+    # Detected/saved Steam path first (covers Snap and custom locations)
+    steam_paths = []
+    detected = find_steam_path()
+    if detected:
+        steam_paths.append(detected)
+    steam_paths.extend(p for p in STEAM_PATH_CANDIDATES if p not in steam_paths)
 
     for steam_path in steam_paths:
         userdata = steam_path / "userdata"

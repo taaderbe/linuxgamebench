@@ -1,8 +1,10 @@
 """Benchmark control view with state machine for the full benchmark flow."""
 
+import time
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
+from typing import Optional
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -47,6 +49,7 @@ class BenchmarkView(QWidget):
         self._log_dir = ""
         self._log_path = ""
         self._metrics: dict = {}
+        self._session_start: Optional[float] = None
 
         # Workers (keep references to prevent GC)
         self._sysinfo_worker = None
@@ -372,6 +375,8 @@ class BenchmarkView(QWidget):
             pass
 
         # Step 2: Setup MangoHud + launch options
+        # Session start: a Proton prefix written after this belongs to this run
+        self._session_start = time.time()
         app_id = self._game.get("app_id", 0)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         game_name = self._game.get("name", "Unknown").replace(" ", "_")
@@ -444,7 +449,10 @@ class BenchmarkView(QWidget):
         self._recording_monitor.set_analyzing()
 
         # Step 5: Analyze
-        self._analyze_worker = AnalyzeWorker(log_path, parent=self)
+        self._analyze_worker = AnalyzeWorker(
+            log_path, app_id=self._game.get("app_id", 0),
+            session_start=self._session_start, parent=self,
+        )
         self._analyze_worker.finished.connect(self._on_analysis_done)
         self._analyze_worker.error.connect(self._on_error)
         self._analyze_worker.start()

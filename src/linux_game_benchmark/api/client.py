@@ -148,6 +148,9 @@ class BenchmarkAPIClient:
                 "scheduler": system_info.get("scheduler"),
                 "gpu_device_id": system_info.get("gpu_device_id"),
                 "gpu_lspci_raw": system_info.get("gpu_lspci_raw"),
+                "proton_build": system_info.get("proton_build"),
+                "proton_tool": system_info.get("proton_tool"),
+                "proton_build_ts": system_info.get("proton_build_ts"),
             },
             "metrics": {
                 "fps_avg": metrics.get("fps_avg") or metrics.get("average", 0),
