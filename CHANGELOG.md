@@ -2,6 +2,29 @@
 
 All notable changes to Linux Game Bench will be documented here.
 
+## 2026-09-25 — client 0.1.47
+
+### Added
+- **New look for the whole site** — a new homepage with a *Featured game of the day*, a *Fresh from the community* feed and *Browse by GPU*. Every page now shares the same header with search and menu, and works on phones.
+- **Search finds CPUs** — the search in the header now finds games, GPUs and CPUs.
+- **Proton version per benchmark** — the app now records which Proton build a game actually ran with (e.g. *Experimental 11.0 (2026-09-17b)*, *GE-Proton10-15*, *CachyOS 11.0*). It is shown in the benchmark details, can be filtered on the overview and is marked in Performance History when it changes.
+- **See where your PC stands right after uploading** — the app shows your share link and how your run compares ("Faster than 72% of 14 other setups in Cyberpunk 2077 at 1440p").
+- **New achievement: Pioneer 🧭** — for the first benchmark of a game on a GPU model.
+- **Share links with a preview card** — links to a single run show a picture with the game, FPS, GPU and CPU on Reddit, Discord, X and co.
+- **"Most wanted"** — the homepage suggests popular games that nobody has benchmarked on your GPU yet.
+- **Community challenges** — a banner on the homepage while a challenge is running, with progress and the leading contributors.
+- **Re-run hint** — after a driver, kernel or Proton update the app reminds you which games are worth benchmarking again.
+
+### Changed
+- **Faster homepage** — the benchmark overview loads much faster.
+- **Screenshot check uses a new AI model** — if the automatic check is not available, screenshots now wait for a manual review instead of going public right away.
+- **AppImage updates** — when a new version is out, the AppImage now opens the download page (pipx installs still get the `pipx upgrade` command).
+
+### Fixed
+- **Snap Steam** is detected, and `lgb scan --steam-path` now remembers a custom Steam folder.
+- Proton and the Steam Linux Runtime no longer show up as games in your library.
+- Game, GPU, CPU and Communication pages no longer scroll sideways on phones.
+
 ## 2026-08-23
 
 ### Added
