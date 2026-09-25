@@ -1073,6 +1073,33 @@ def gpu(
         console.print(f"\n[green]✓ Set {selected['display_name']} as default GPU[/green]")
 
 
+def _print_upload_extras(result) -> None:
+    """Share link, standing and new achievements after a successful upload."""
+    if result.url:
+        console.print(f"  [bold]Share:[/bold] {result.url}")
+    standing = result.standing or {}
+    if standing.get("text"):
+        console.print(f"  [cyan]{standing['text']}[/cyan]")
+    if result.pioneer:
+        console.print("  [bold yellow]🧭 Pioneer![/bold yellow] First benchmark of this game on your GPU model.")
+    for ach in result.achievements:
+        if ach.get("id") == "pioneer" and result.pioneer:
+            continue
+        console.print(f"  [yellow]{ach.get('icon', '🏆')} Achievement unlocked: {ach.get('name', '')}[/yellow]"
+                      f" [dim]- {ach.get('description', '')}[/dim]")
+
+
+def _print_rerun_hints(system_info: dict) -> None:
+    """Driver/Proton changed since the last upload -> suggest a re-run."""
+    try:
+        from linux_game_benchmark.benchmark.env_tracker import rerun_hints
+        gpu = system_info.get("gpu", {}) or {}
+        for hint in rerun_hints(_short_gpu(gpu.get("model")), gpu.get("driver_version")):
+            console.print(f"[yellow]↻ {hint}[/yellow]")
+    except Exception:
+        pass
+
+
 @app.command()
 def benchmark(
     game: str = typer.Argument(
@@ -1307,6 +1334,7 @@ def benchmark(
 
     # Setup
     system_info = get_system_info()
+    _print_rerun_hints(system_info)
     storage = BenchmarkStorage()
     mangohud_manager = MangoHudConfigManager()
     output_dir = Path.home() / "benchmark_results" / "benchmark_session"
@@ -1688,8 +1716,7 @@ def benchmark(
                         )
                     if result.success:
                         console.print(f"[bold green]✓ Uploaded![/bold green]")
-                        if result.url:
-                            console.print(f"  {result.url}")
+                        _print_upload_extras(result)
                     else:
                         # Check if auth error - offer to login and retry
                         auth_errors = ["session expired", "authentication", "login again", "401"]
@@ -1771,8 +1798,7 @@ def benchmark(
                                         console.print(f"[bold green]✓ Uploaded anonymously![/bold green]")
                                     else:
                                         console.print(f"[bold green]✓ Uploaded![/bold green]")
-                                    if result.url:
-                                        console.print(f"  {result.url}")
+                                    _print_upload_extras(result)
                                 else:
                                     console.print(f"[red]Upload failed: {result.error}[/red]")
                         else:

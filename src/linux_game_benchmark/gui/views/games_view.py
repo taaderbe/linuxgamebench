@@ -16,7 +16,7 @@ from linux_game_benchmark.gui.constants import (
     TEXT_SECONDARY, TEXT_MUTED, BORDER, SUCCESS, WARNING, ERROR,
 )
 from linux_game_benchmark.gui.signals import AppSignals
-from linux_game_benchmark.gui.workers import SteamScanWorker
+from linux_game_benchmark.gui.workers import SteamScanWorker, RerunHintWorker
 from linux_game_benchmark.gui.resources import ImageCache
 from linux_game_benchmark.gui.views.game_card import GameCard, CARD_WIDTH
 
@@ -204,6 +204,16 @@ class GamesView(QWidget):
 
         layout.addWidget(toolbar)
 
+        # --- Re-run hint (driver/Proton changed since the last upload) ---
+        self._rerun_banner = QLabel("")
+        self._rerun_banner.setWordWrap(True)
+        self._rerun_banner.setStyleSheet(
+            f"color: {TEXT_PRIMARY}; background: rgba(243, 156, 18, 0.12); "
+            f"border: 1px solid {WARNING}; border-radius: 8px; padding: 8px 12px; font-size: 13px;"
+        )
+        self._rerun_banner.setVisible(False)
+        layout.addWidget(self._rerun_banner)
+
         # --- Content area (scroll) ---
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
@@ -287,10 +297,24 @@ class GamesView(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._check_rerun_hints()
         if not self._auto_scanned:
             self._auto_scanned = True
             if not self._games:  # Skip if already loaded from startup scan
                 self._scan_games()
+
+    def _check_rerun_hints(self):
+        """Background check; runs each time the view is shown (cheap, no network)."""
+        if getattr(self, "_rerun_worker", None) and self._rerun_worker.isRunning():
+            return
+        self._rerun_worker = RerunHintWorker(self)
+        self._rerun_worker.finished.connect(self._on_rerun_hints)
+        self._rerun_worker.start()
+
+    def _on_rerun_hints(self, hints: list):
+        if hints:
+            self._rerun_banner.setText("↻  " + "\n↻  ".join(hints))
+        self._rerun_banner.setVisible(bool(hints))
 
     def _scan_games(self):
         """Public method for external refresh calls."""

@@ -5,8 +5,8 @@ Handles benchmark uploads and API communication.
 """
 
 import httpx
-from dataclasses import dataclass
-from typing import Optional, Dict, Any, Tuple
+from dataclasses import dataclass, field
+from typing import Optional, Dict, Any, List, Tuple
 
 from linux_game_benchmark.config.settings import settings
 
@@ -29,8 +29,11 @@ class UploadResult:
     """Result of a benchmark upload."""
     success: bool
     benchmark_id: Optional[int] = None
-    url: Optional[str] = None
+    url: Optional[str] = None  # share link of the run (server >= 2026-09: share_url)
     error: Optional[str] = None
+    standing: Optional[Dict[str, Any]] = None  # "faster than X% of N setups" (server-side)
+    pioneer: bool = False  # first benchmark of this game on this GPU model
+    achievements: List[Dict[str, Any]] = field(default_factory=list)  # newly earned
 
 
 class BenchmarkAPIClient:
@@ -179,10 +182,19 @@ class BenchmarkAPIClient:
 
                 if response.status_code == 200 or response.status_code == 201:
                     data = response.json()
+                    try:
+                        from linux_game_benchmark.benchmark.env_tracker import record_upload
+                        record_upload(steam_app_id, game_name, payload["system"])
+                    except Exception:
+                        pass  # re-run hints are a nice-to-have, never fail the upload
+                    standing = data.get("standing")
                     return UploadResult(
                         success=True,
                         benchmark_id=data.get("id"),
-                        url=data.get("url"),
+                        url=data.get("share_url") or data.get("url"),
+                        standing=standing if isinstance(standing, dict) else None,
+                        pioneer=bool(data.get("pioneer")),
+                        achievements=[a for a in data.get("new_achievements") or [] if isinstance(a, dict)],
                     )
                 elif response.status_code == 401:
                     return UploadResult(

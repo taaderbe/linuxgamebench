@@ -40,6 +40,21 @@ class SystemInfoWorker(QThread):
             self.error.emit(str(e))
 
 
+class RerunHintWorker(QThread):
+    """Driver/Proton changed since the last upload? -> list of hint strings."""
+    finished = Signal(list)
+
+    def run(self):
+        try:
+            from linux_game_benchmark.benchmark.env_tracker import rerun_hints
+            from linux_game_benchmark.system.hardware_info import get_system_info
+            from linux_game_benchmark.utils.formatting import short_gpu
+            gpu = get_system_info().get("gpu", {}) or {}
+            self.finished.emit(rerun_hints(short_gpu(gpu.get("model")), gpu.get("driver_version")))
+        except Exception:
+            self.finished.emit([])
+
+
 class LoginWorker(QThread):
     """Authenticate user with email/password/2FA."""
     finished = Signal(bool, str)  # (success, message_or_username)
@@ -300,6 +315,7 @@ class AnalyzeWorker(QThread):
 class UploadWorker(QThread):
     """Upload benchmark results to server."""
     finished = Signal(bool, str, str)  # (success, error_or_url, benchmark_url)
+    extras = Signal(dict)  # standing / pioneer / achievements, emitted before finished
 
     def __init__(self, upload_kwargs: dict, parent=None):
         super().__init__(parent)
@@ -311,6 +327,11 @@ class UploadWorker(QThread):
             client = BenchmarkAPIClient()
             result = client.upload_benchmark(**self._kwargs, require_auth=False)
             if result.success:
+                self.extras.emit({
+                    "standing": result.standing or {},
+                    "pioneer": result.pioneer,
+                    "achievements": result.achievements,
+                })
                 self.finished.emit(True, "", result.url or "")
             else:
                 self.finished.emit(False, result.error or "Upload failed", "")

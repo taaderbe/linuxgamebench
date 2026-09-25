@@ -137,6 +137,16 @@ class BenchmarkResults(QWidget):
         self._url_label.mousePressEvent = self._open_url
         p2_layout.addWidget(self._url_label)
 
+        # Standing + pioneer/achievements (shown after upload)
+        self._extras_label = QLabel("")
+        self._extras_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._extras_label.setWordWrap(True)
+        self._extras_label.setStyleSheet(
+            f"color: {TEXT_SECONDARY}; font-size: 13px; background: transparent;"
+        )
+        self._extras_label.setVisible(False)
+        p2_layout.addWidget(self._extras_label)
+
         # FPS display
         self._fps_display = FpsDisplay()
         p2_layout.addWidget(self._fps_display)
@@ -208,6 +218,8 @@ class BenchmarkResults(QWidget):
         # Reset state
         self._comment.clear()
         self._url_label.setVisible(False)
+        self._extras_label.setVisible(False)
+        self._extras_label.setText("")
         self._result_status.setText("")
         self._ok_btn.setEnabled(True)
         self._ok_btn.setText("OK")
@@ -342,8 +354,24 @@ class BenchmarkResults(QWidget):
         }
 
         self._upload_worker = UploadWorker(upload_kwargs, parent=self)
+        self._upload_worker.extras.connect(self._on_upload_extras)
         self._upload_worker.finished.connect(self._on_upload_done)
         self._upload_worker.start()
+
+    def _on_upload_extras(self, extras: dict):
+        lines = []
+        standing = extras.get("standing") or {}
+        if standing.get("text"):
+            lines.append(standing["text"])
+        if extras.get("pioneer"):
+            lines.append("🧭 Pioneer! First benchmark of this game on your GPU model.")
+        for ach in extras.get("achievements") or []:
+            if ach.get("id") == "pioneer" and extras.get("pioneer"):
+                continue
+            lines.append(f"{ach.get('icon', '🏆')} Achievement unlocked: {ach.get('name', '')}")
+        if lines:
+            self._extras_label.setText("\n".join(lines))
+            self._extras_label.setVisible(True)
 
     def _on_upload_done(self, success: bool, error_or_empty: str, url: str):
         if success:
