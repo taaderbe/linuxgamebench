@@ -210,20 +210,29 @@ class MainWindow(QMainWindow):
             f"Current version: v{current}\n\n"
             "Please update to get the latest features and fixes."
         )
-        msg.setInformativeText(
-            "Run:  pipx upgrade linux-game-benchmark\n"
-            "  or: pip install --upgrade linux-game-benchmark"
-        )
-        update_btn = msg.addButton("Copy Update Command", QMessageBox.ButtonRole.ActionRole)
+        from linux_game_benchmark.gui.update_info import update_instructions
+        try:
+            from linux_game_benchmark.config.settings import settings as _settings
+            api_url = _settings.API_BASE_URL
+        except Exception:
+            api_url = "https://linuxgamebench.com/api/v1"
+        how = update_instructions(api_url)
+        msg.setInformativeText(how.text)
+        update_btn = msg.addButton(how.button, QMessageBox.ButtonRole.ActionRole)
         msg.addButton("Continue", QMessageBox.ButtonRole.RejectRole)
         quit_btn = msg.addButton("Quit", QMessageBox.ButtonRole.DestructiveRole)
         msg.exec()
 
         clicked = msg.clickedButton()
         if clicked == update_btn:
-            from PySide6.QtWidgets import QApplication
-            QApplication.clipboard().setText("pipx upgrade linux-game-benchmark")
-            self._toast_mgr.info("Update command copied to clipboard")
+            if how.open_url:
+                from PySide6.QtCore import QUrl
+                from PySide6.QtGui import QDesktopServices
+                QDesktopServices.openUrl(QUrl(how.open_url))
+            else:
+                from PySide6.QtWidgets import QApplication
+                QApplication.clipboard().setText(how.copy_text)
+                self._toast_mgr.info("Update command copied to clipboard")
         elif clicked == quit_btn:
             from PySide6.QtWidgets import QApplication
             QApplication.quit()
