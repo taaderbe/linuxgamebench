@@ -1,0 +1,15 @@
+#!/bin/sh
+# AppRun for Linux Game Bench GUI
+HERE="$(dirname "$(readlink -f "$0")")"
+export PYTHONHOME="$HERE/usr"
+export PATH="$HERE/usr/bin:$PATH"
+export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+# Use bundled CA certificates if the system ones are not found
+if [ ! -e /etc/ssl/certs/ca-certificates.crt ] && [ ! -e /etc/pki/tls/certs/ca-bundle.crt ]; then
+    CERTIFI_PEM="$("$HERE/usr/bin/python3" -c 'import certifi; print(certifi.where())' 2>/dev/null)"
+    if [ -n "$CERTIFI_PEM" ]; then
+        export SSL_CERT_FILE="$CERTIFI_PEM"
+        export REQUESTS_CA_BUNDLE="$CERTIFI_PEM"
+    fi
+fi
+exec "$HERE/usr/bin/python3" -c 'import sys; from linux_game_benchmark.gui import launch; launch()' "$@"

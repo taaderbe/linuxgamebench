@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Linux Game Bench
+Comment=Automated gaming benchmark tool for Linux
+Exec=linuxgamebench
+Icon=linuxgamebench
+Categories=Utility;Game;
+Terminal=false
+StartupNotify=true
