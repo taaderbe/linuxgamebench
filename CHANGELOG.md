@@ -2,6 +2,29 @@
 
 All notable changes to Linux Game Bench will be documented here.
 
+## 2026-09-30
+
+Website update only — no new client version, nothing to install.
+
+### Added
+- **My Benchmarks by game** — one card per game with your latest FPS, a trend line and where your latest run stands in the community ("▲ 8% vs typical 7900 XTX" or "#2 of 6 setups"). A green ✓ shows when your average FPS reaches your target. Switch to *All runs* for the classic list.
+- **Trend arrows** — ▲/▼ next to your average FPS on My Benchmarks and profiles, compared with your previous run of the same game on the same GPU, resolution and settings.
+- **Performance overview** — Performance now opens with a card per game and *What changed your FPS* (the average effect of driver, kernel and Proton changes). The detail view only compares runs with the same setup (resolution, preset, upscaling) and marks every change with a numbered badge in the chart.
+- **Account menu** — a *Home* entry, an unread counter on *Communication* and a *Next badge* card ("10 more benchmarks to Bronze"). The phone menu has Log in / Register for visitors.
+- **Better game, GPU and CPU pages** — *FPS by GPU* bar chart with resolution tabs, most-tested games with their resolution, a *Benchmark your rig* button, and richer link previews when a page is shared.
+- **Leaderboard tabs** — *Most benchmarks*, *Most games* and *Most viewed*.
+- **Homepage** — a short *How it works* in three steps.
+
+### Changed
+- One consistent date format across the whole site, shown in your local time.
+- Performance shows each step's total difference once, with the changes as chips — no more percentages repeated per change.
+
+### Fixed
+- **Top contributors** on GPU and CPU pages showed inflated run counts (81 runs were shown as "6561 runs").
+- **Security:** GPU, CPU and comparison names from the address bar are now escaped in page titles, and game names are escaped everywhere in My Benchmarks (XSS hardening).
+- Performance no longer scrolls sideways on phones, and a very long game name no longer stretches the My Benchmarks filters.
+- Warning and ban notification emails to moderated users are now actually sent.
+
 ## 2026-09-25 — client 0.1.47
 
 ### Added
