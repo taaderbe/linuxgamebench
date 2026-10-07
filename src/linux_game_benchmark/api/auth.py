@@ -5,12 +5,20 @@ Handles login, token management and session persistence.
 Tokens are stored in ~/.config/lgb/auth.json
 """
 
+import contextlib
 import json
+import os
+import time
 import httpx
 from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any
+
+try:  # Linux/macOS only; without it the refresh simply runs unlocked
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None
 
 from linux_game_benchmark.config.settings import settings
 
@@ -53,10 +61,18 @@ class AuthSession:
         )
 
     def save(self, path: Optional[Path] = None) -> None:
-        """Save session to file."""
+        """Save session to file: atomically (a parallel reader never sees half a file) and for the owner only."""
         path = path or settings.get_auth_file()
-        with open(path, "w") as f:
-            json.dump(self.to_dict(), f, indent=2)
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        try:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
+                json.dump(self.to_dict(), f, indent=2)
+            os.replace(tmp, path)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+            raise
 
     @classmethod
     def load(cls, path: Optional[Path] = None) -> Optional["AuthSession"]:
@@ -78,6 +94,36 @@ class AuthSession:
     def get_email(self) -> str:
         """Get email from user info."""
         return self.user.get("email", "Unknown")
+
+
+@contextlib.contextmanager
+def _refresh_lock(timeout: float = 15.0):
+    """Let only one lgb process (CLI, GUI) at a time renew the tokens in auth.json.
+
+    Refresh tokens are single-use: if two processes renew at once, the second one is rejected.
+    Best effort - if the lock cannot be taken within `timeout`, the refresh runs without it.
+    """
+    fd = None
+    if fcntl is not None:
+        auth_file = settings.get_auth_file()
+        try:
+            fd = os.open(auth_file.with_name(auth_file.name + ".lock"), os.O_RDWR | os.O_CREAT, 0o600)
+            deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        break
+                    time.sleep(0.05)
+        except OSError:
+            pass
+    try:
+        yield
+    finally:
+        if fd is not None:
+            os.close(fd)  # closing releases the lock
 
 
 class TokenManager:
@@ -181,37 +227,57 @@ class TokenManager:
 
         return True, "Logged out successfully"
 
+    def _adopt_newer_session(self) -> bool:
+        """Use the tokens in auth.json if another process (CLI/GUI) renewed them since we loaded ours."""
+        disk = AuthSession.load()
+        if disk is not None and self._session is not None and disk.refresh_token != self._session.refresh_token:
+            self._session = disk
+            return True
+        return False
+
     def refresh_tokens(self) -> bool:
         """
         Refresh the access token using refresh token.
 
+        Refresh tokens are single-use, so a token another process already used is not an error:
+        the newer tokens are taken from auth.json. The login ends only when the server rejects
+        the current refresh token (401). A busy server, rate limit or network error keeps it.
+
         Returns:
             True if refresh succeeded, False otherwise.
         """
-        session = self._get_session()
-        if session is None:
+        if self._get_session() is None:
             return False
 
-        try:
-            with httpx.Client(timeout=10.0) as client:
-                response = client.post(
-                    f"{self.base_url}/auth/refresh",
-                    json={"refresh_token": session.refresh_token},
-                )
+        with _refresh_lock():
+            if self._adopt_newer_session() and not self._is_token_expired(self._session.access_token):
+                return True  # another process renewed just now
 
-                if response.status_code == 200:
-                    data = response.json()
+            for _ in range(2):
+                session = self._session
+                try:
+                    with httpx.Client(timeout=10.0) as client:
+                        response = client.post(
+                            f"{self.base_url}/auth/refresh",
+                            json={"refresh_token": session.refresh_token},
+                        )
+                    status = response.status_code
+                    data = response.json() if status == 200 else None
+                except Exception:
+                    return False
+
+                if status == 200:
                     session.access_token = data["access_token"]
                     session.refresh_token = data["refresh_token"]
                     session.save()
                     self._session = session
                     return True
-                else:
-                    # Refresh failed - clear invalid session
-                    self.logout()
-                    return False
+                if status != 401:
+                    return False  # rate limit / server problem: try again later, stay logged in
+                if not self._adopt_newer_session():
+                    break  # the server really rejected the current tokens
 
-        except Exception:
+            self.logout()  # session expired or revoked - clear it
             return False
 
     def _is_token_expired(self, token: str) -> bool:

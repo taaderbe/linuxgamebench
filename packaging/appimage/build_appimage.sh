@@ -3,6 +3,12 @@
 #
 #   packaging/appimage/build_appimage.sh            -> dist/LinuxGameBench-x86_64.AppImage (+ .sha256)
 #
+#   LGB_APPIMAGE_STAGE=preprod packaging/appimage/build_appimage.sh
+#                                                   -> dist/LinuxGameBench-preprod-x86_64.AppImage
+#       Test build for a stage (dev|rc|preprod): AppRun starts the app with LGB_STAGE=<stage> and its own
+#       login/config directory (~/.config/lgb-<stage>), so the normal PROD login is never touched.
+#       The code and the default stage inside are identical to a normal build (default stays prod).
+#
 # Layout (same as the AppImage offered since 2026-08-23):
 #   AppDir/usr            python-build-standalone CPython 3.12 (relocatable, no system Python needed)
 #   AppDir/usr/lib/python3.12/site-packages   client + dependencies + PySide6-Essentials
@@ -17,6 +23,8 @@ REPO="$(cd "$HERE/../.." && pwd)"
 CACHE="${LGB_APPIMAGE_CACHE:-$HOME/.cache/lgb-appimage-build}"
 WORK="${WORK:-$REPO/build/appimage}"
 OUT="${OUT:-$REPO/dist}"
+STAGE_BUILD="${LGB_APPIMAGE_STAGE:-}"
+case "$STAGE_BUILD" in ""|dev|rc|preprod) ;; *) echo "LGB_APPIMAGE_STAGE must be dev, rc or preprod (not prod: that is the normal build)" >&2; exit 2 ;; esac
 
 PBS_TAG="20260924"
 PBS_FILE="cpython-3.12.14+${PBS_TAG}-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
@@ -89,13 +97,20 @@ print("bundle ok:", settings.CLIENT_VERSION)
 EOF
 
 install -m 755 "$HERE/AppRun" "$WORK/AppDir/AppRun"
+if [ -n "$STAGE_BUILD" ]; then
+    # Stage test build: pin the stage and keep login/config apart from the normal install
+    sed -i "/^HERE=/a export LGB_STAGE=\"$STAGE_BUILD\"\nexport LGB_CONFIG_DIR=\"\${XDG_CONFIG_HOME:-\$HOME/.config}/lgb-$STAGE_BUILD\"" "$WORK/AppDir/AppRun"
+    grep -q "^export LGB_STAGE=\"$STAGE_BUILD\"$" "$WORK/AppDir/AppRun" && grep -q '^export LGB_CONFIG_DIR=' "$WORK/AppDir/AppRun" \
+        || { echo "could not pin the stage in AppRun" >&2; exit 1; }
+    sh -n "$WORK/AppDir/AppRun"
+fi
 install -m 644 "$HERE/linuxgamebench.desktop" "$WORK/AppDir/linuxgamebench.desktop"
 install -m 644 "$REPO/src/linux_game_benchmark/gui/icons/lgb.png" "$WORK/AppDir/linuxgamebench.png"
 ln -sf linuxgamebench.png "$WORK/AppDir/.DirIcon"
 
-TARGET="$OUT/LinuxGameBench-x86_64.AppImage"
+TARGET="$OUT/LinuxGameBench${STAGE_BUILD:+-$STAGE_BUILD}-x86_64.AppImage"
 rm -f "$TARGET"
 ARCH=x86_64 "$CACHE/$TOOL_FILE" --appimage-extract-and-run --no-appstream "$WORK/AppDir" "$TARGET" >/dev/null
 ( cd "$OUT" && sha256sum "$(basename "$TARGET")" > "$(basename "$TARGET").sha256" )
-echo "== built $TARGET ($(du -h "$TARGET" | cut -f1)), version $VERSION, commit $COMMIT"
+echo "== built $TARGET ($(du -h "$TARGET" | cut -f1)), version $VERSION, commit $COMMIT${STAGE_BUILD:+, stage $STAGE_BUILD}"
 cat "$TARGET.sha256"

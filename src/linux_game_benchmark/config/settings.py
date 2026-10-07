@@ -11,8 +11,10 @@ import json
 class Settings:
     """Application settings."""
 
-    # Config directory (XDG compliant)
-    CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "lgb"
+    # Config directory (XDG compliant). LGB_CONFIG_DIR overrides it, e.g. so a test build for
+    # another stage keeps its own auth.json/config.json and never touches the normal login.
+    CONFIG_DIR = (Path(os.environ["LGB_CONFIG_DIR"]) if os.environ.get("LGB_CONFIG_DIR")
+                  else Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "lgb")
 
     # Auth file path
     AUTH_FILE = CONFIG_DIR / "auth.json"
