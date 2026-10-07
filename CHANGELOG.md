@@ -2,6 +2,20 @@
 
 All notable changes to Linux Game Bench will be documented here.
 
+## 2026-10-07
+
+**Client 0.1.48 — everyone has to log in once again** (website, app and `lgb login`).
+
+### Changed
+- **Shorter login sessions** — your login is now renewed automatically in the background (each session token lasts 15 minutes, a login stays valid for up to 30 days of use). Because of this, all existing logins ended with this update.
+- Stricter limits on uploads (log size and length) and on many heavy requests at once, so one big request can no longer slow down the site for everyone.
+
+### Fixed
+- **App and terminal open at the same time** — renewing the login in one no longer logs you out of the other. A short server hiccup or a rate limit no longer ends your login either.
+- Your saved login file (`~/.config/lgb/auth.json`) is now readable only by you.
+- Text entered by users (game names, comments, notes, settings) is now always shown as plain text on the website instead of being interpreted.
+- The FAQ download button shows the current version.
+
 ## 2026-09-30
 
 Website update only — no new client version, nothing to install.
