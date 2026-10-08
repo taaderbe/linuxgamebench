@@ -3,24 +3,40 @@
 Automated benchmark tool for Steam games on Linux.
 Measures FPS, stutter, frame pacing and more using MangoHud.
 
-![Benchmark Results on linuxgamebench.com](docs/update_e.png)
+![linuxgamebench.com - real Linux gaming benchmarks from the community](docs/website-home.jpg)
 
 ## Features
 
-- Automatic Steam game detection
+- Automatic Steam game detection (native, Flatpak and Snap Steam)
 - MangoHud integration for frametimes
 - Detailed metrics (AVG FPS, 1% Low, 0.1% Low, Stutter)
 - Multi-resolution support (HD, FHD, WQHD, UWQHD, UHD)
 - **Multi-GPU support** (laptops with iGPU + dGPU)
+- **Proton version** of every run is recorded automatically
 - Beautiful HTML reports with interactive charts
 - Multi-system comparison (compare different GPUs/CPUs)
-- Upload to community database at [linuxgamebench.com](https://linuxgamebench.com)
+- Upload to community database at [linuxgamebench.com](https://linuxgamebench.com) - right after the upload you see where your PC stands ("Faster than 72% of 14 other setups")
+- Command line, **GUI** and a portable **AppImage**
 - Automatic update notifications
+
+## What you get on linuxgamebench.com
+
+- **Game, GPU and CPU pages** with FPS by GPU, top contributors and the most-tested games
+- **Compare GPUs** - two graphics cards side by side across every game both were benchmarked on
+- **Performance History** - did your PC get faster after a driver, kernel or Proton update?
+- **My Benchmarks** - one card per game with trend arrows and your place in the community
+- **Leaderboard**, achievement badges and community challenges
+
+![Game page with FPS by GPU, top contributors and more Linux benchmarks](docs/website-game.jpg)
+
+![Benchmark details with frametimes, bottleneck, GPU/CPU load and Proton version](docs/website-benchmark.png)
+
+See the [changelog](CHANGELOG.md) for what changed and when.
 
 ## Requirements
 
 - Linux (tested on Arch, Fedora, Ubuntu, openSUSE)
-- Steam installed
+- Steam installed (native, Flatpak or Snap)
 - MangoHud installed
 - Vulkan tools (`vulkaninfo`) for GPU detection
 - Python 3.10+
@@ -30,6 +46,19 @@ Measures FPS, stutter, frame pacing and more using MangoHud.
 
 
 ## Installation
+
+### No terminal needed: AppImage (experimental)
+
+The GUI as a portable AppImage (~130 MB, x86_64) - no pipx or Python setup:
+
+```bash
+# Download from https://linuxgamebench.com/faq.html (or directly:)
+wget https://linuxgamebench.com/downloads/LinuxGameBench-x86_64.AppImage
+chmod +x LinuxGameBench-x86_64.AppImage
+./LinuxGameBench-x86_64.AppImage
+```
+
+Requirements: glibc >= 2.28 (Ubuntu 20.04+, Debian 11+, Fedora 36+) and FUSE. MangoHud and the Vulkan tools still have to be installed on your system - the AppImage only bundles the app. To update, download the new AppImage and replace the file (the app tells you when a new version is out).
 
 ### Arch Linux / CachyOS (Recommended)
 
@@ -115,15 +144,16 @@ The GUI provides the same features as the CLI: scan games, configure settings, r
 ### Update to Latest Version
 
 ```bash
-pipx uninstall linux-game-benchmark
-pipx install git+https://github.com/taaderbe/linuxgamebench.git
+pipx upgrade linux-game-benchmark
 ```
 
-**Update with GUI:**
+**Update with GUI** (re-inject PySide6 afterwards):
 ```bash
-pipx uninstall linux-game-benchmark
-pipx install "linux-game-benchmark[gui]" git+https://github.com/taaderbe/linuxgamebench.git
+pipx upgrade linux-game-benchmark
+pipx inject linux-game-benchmark PySide6
 ```
+
+If an upgrade ever fails, a clean reinstall works too: `pipx uninstall linux-game-benchmark`, then the install command for your distribution above.
 
 ### Install from Source (Development)
 
@@ -156,6 +186,9 @@ lgb list-games
 
 # Refresh game list (after installing new games)
 lgb scan
+
+# Steam in a custom folder? Point lgb at it once (it remembers the path)
+lgb scan --steam-path /path/to/Steam
 
 # Filter: only Proton/Windows games
 lgb list-games --proton
@@ -277,6 +310,8 @@ xdg-open ~/benchmark_results/index.html
 | `lgb analyze [log]` | Analyze MangoHud log |
 | `lgb report` | Regenerate HTML reports |
 | `lgb settings` | Configure defaults (resolution, upload, etc.) |
+| `lgb config` | Show the server configuration |
+| `lgb --version` | Show the installed version |
 | `lgb login` | Login to your account |
 | `lgb logout` | Logout from your account |
 | `lgb status` | Show login status and account info |
@@ -335,10 +370,15 @@ Benchmarks are automatically uploaded after each `lgb benchmark` run. **No login
 lgb benchmark CS2  # Run benchmark - uploads automatically
 ```
 
-**Optional:** Create an account for extra features (track your benchmarks, better compare, edit settings):
+After the upload you get a share link and see how your run compares to other setups with the same game and resolution.
+
+**Optional:** Create an account for extra features (track your benchmarks, Performance History, achievements, edit settings):
 ```bash
 lgb login          # Login to your account
+lgb status         # Show login status and account info
 ```
+
+Logins renew themselves in the background (a login stays valid for up to 30 days of use), and the CLI and the GUI can be open at the same time.
 
 ## Multi-GPU Systems
 
