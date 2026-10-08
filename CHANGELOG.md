@@ -2,6 +2,17 @@
 
 All notable changes to Linux Game Bench will be documented here.
 
+## 2026-10-08
+
+Website update only — no new client version, nothing to install.
+
+### Added
+- **More Linux benchmarks** — game pages now suggest the six most-benchmarked other games.
+
+### Fixed
+- Relative times ("3h ago") on the website no longer depend on your time zone.
+- The rank trophy on your profile now opens the *Most viewed* leaderboard tab.
+
 ## 2026-10-07
 
 **Client 0.1.48 — everyone has to log in once again** (website, app and `lgb login`).
