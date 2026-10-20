@@ -79,6 +79,7 @@ def test_service_unit_uses_the_appimage_when_there_is_one(monkeypatch):
     unit = deck_setup.unit_text()
     assert 'ExecStart="/home/deck/Applications/LinuxGameBench-x86_64.AppImage" deck run' in unit
     assert "Restart=on-failure" in unit and "WantedBy=default.target" in unit
+    assert "KillMode=mixed" in unit, "stopping the AppImage service must not unmount it under the running Python (SIGBUS)"
 
 
 def test_service_unit_unpacks_itself_when_the_installer_found_no_fuse(monkeypatch):

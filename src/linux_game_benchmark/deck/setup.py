@@ -139,6 +139,9 @@ def unit_text(command: Optional[str] = None) -> str:
         f"{extract}"
         "Restart=on-failure\n"
         "RestartSec=5\n"
+        # An AppImage runs next to its FUSE helper: SIGTERM for both unmounts the program under Python's feet (SIGBUS).
+        # `mixed` stops Python first, then the helper.
+        "KillMode=mixed\n"
         "Nice=10\n\n"
         "[Install]\n"
         "WantedBy=default.target\n"
