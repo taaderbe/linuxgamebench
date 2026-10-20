@@ -328,6 +328,105 @@ def read_launch_env(environ: Optional[dict] = None) -> dict:
     return picked
 
 
+# ----- software versions: Proton build, runtime, Steam client, drivers ---------------------------------------------------
+
+# the packages whose version changes how a game runs (SteamOS keeps its package database under /usr/lib/holo)
+SOFTWARE_PACKAGES = {"mesa": "mesa", "vulkan_driver": "vulkan-radeon", "gamescope": "gamescope", "steam_package": "steam-jupiter-stable"}
+PACMAN_DBS = ("usr/lib/holo/pacmandb/local", "var/lib/pacman/local")
+_PKG_DIR = re.compile(r"^(?P<name>.+)-(?P<version>[^-]+)-(?P<release>[^-]+)$")
+_UNSAFE = re.compile(r"[^A-Za-z0-9 .,:+()_\-]")
+
+
+def _safe(text: Optional[str], limit: int = 48) -> Optional[str]:
+    """A version or tool name that is fine to publish: plain characters only, never a path."""
+    if not text:
+        return None
+    cleaned = _UNSAFE.sub("", text.strip()).strip()
+    return cleaned[:limit] or None
+
+
+def _installed_packages(root: Path) -> dict:
+    wanted = set(SOFTWARE_PACKAGES.values())
+    for rel in PACMAN_DBS:
+        try:
+            names = [entry.name for entry in (root / rel).iterdir()]
+        except OSError:
+            continue
+        found = {}
+        for entry in names:
+            match = _PKG_DIR.match(entry)
+            if match and match["name"] in wanted:
+                found[match["name"]] = match["version"]
+        if found:
+            return found
+    return {}
+
+
+def _tool_build(tool_dir: Path) -> Optional[str]:
+    """Proton writes '<timestamp> <build name>' into its `version` file; the build name is what people quote."""
+    text = _read(tool_dir / "version")
+    if not text:
+        return None
+    parts = text.split()
+    if len(parts) < 2:                                       # a bare timestamp (custom builds) says nothing
+        return None
+    return _safe(parts[-1])
+
+
+def _runtime_version(runtime_dir: Path) -> Optional[str]:
+    text = _read(runtime_dir / "VERSIONS.txt") or ""
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) >= 2 and fields[0] == "depot":
+            return fields[1]
+    return None
+
+
+def _steam_client(home: Path) -> dict:
+    """The Steam client build and update channel, from the package manifest Steam keeps in its own folder."""
+    for base in (home / ".local/share/Steam/package", home / ".steam/steam/package"):
+        try:
+            manifests = sorted(base.glob("steam_client_*.manifest"))
+        except OSError:
+            continue
+        for path in manifests:
+            match = re.search(r'"version"\s+"(\d+)"', _read(path) or "")
+            if match:
+                channel = re.sub(r"^steam_client_|_ubuntu12\.manifest$", "", path.name)
+                return {"steam_client": match.group(1), "steam_channel": _safe(channel)}
+    return {}
+
+
+def read_software(root: str | Path = "/", home: Optional[Path] = None, tools: Optional[dict] = None) -> dict:
+    """What the game ran on, above the hardware: Proton build and Steam Linux Runtime (from how Steam launched the game),
+    the Steam client, Mesa / Vulkan driver / gamescope. `tools` is game.launch_tools(): None when unknown, {} for a
+    native Linux game, {"proton_dir", "runtime_dir"} for a Proton game. Names only - never a path."""
+    root = Path(root)
+    home = home or (Path.home() if str(root) == "/" else root / "home/deck")
+    out: dict = {}
+    if tools is not None:
+        proton = tools.get("proton_dir")
+        if proton:
+            proton = Path(proton)
+            out["compat"] = "proton"
+            out["proton"] = _safe(proton.name)
+            out["proton_build"] = _tool_build(proton)
+            out["proton_source"] = "custom" if "compatibilitytools.d" in proton.parts else "steam"
+        else:
+            out["compat"] = "native"
+        runtime = tools.get("runtime_dir")
+        if runtime:
+            runtime = Path(runtime)
+            version = _runtime_version(runtime)
+            out["runtime"] = _safe(f"{runtime.name} {version}" if version else runtime.name)
+    out.update(_steam_client(home))
+    packages = _installed_packages(root)
+    for key, package in SOFTWARE_PACKAGES.items():
+        if package in packages:
+            out[key] = _safe(packages[package])
+    return _drop_empty(out)
+
+
 def snapshot(root: str | Path = "/") -> dict:
     """One reading of everything that can change during a run."""
     root = Path(root)

@@ -292,3 +292,65 @@ def test_the_built_in_screen_is_shown_in_landscape(tmp_path, reported, shown):
     put(tmp_path, "sys/class/drm/card0-eDP-1/status", "connected")
     put(tmp_path, "sys/class/drm/card0-eDP-1/modes", reported + "\n")
     assert telemetry.read_display(tmp_path)["internal_mode"] == shown
+
+
+# ----- software versions -------------------------------------------------------------------------------------------------
+
+def build_software(root: Path):
+    """What SteamOS keeps on disk: package database, Steam manifest, Proton and runtime folders."""
+    home = root / "home/deck"
+    steam = home / ".local/share/Steam"
+    put(root, "usr/lib/holo/pacmandb/local/mesa-26.1.2.221562.radeonsi_26.1.2-1.1/desc", "x")
+    put(root, "usr/lib/holo/pacmandb/local/mesa-utils-9.0.0-7/desc", "x")
+    put(root, "usr/lib/holo/pacmandb/local/vulkan-radeon-26.2.0_devel.222131.steamos_26.05.16-1/desc", "x")
+    put(root, "usr/lib/holo/pacmandb/local/gamescope-3.16.23.6-1/desc", "x")
+    put(root, "usr/lib/holo/pacmandb/local/steam-jupiter-stable-1.0.0.85-9.2/desc", "x")
+    put(root, "usr/lib/holo/pacmandb/local/bash-5.2-1/desc", "x")
+    put(home, ".local/share/Steam/package/steam_client_steamdeck_stable_ubuntu12.manifest", '"ubuntu12"\n{\n\t"version"\t\t"1791918634"\n}\n')
+    put(steam, "steamapps/common/Proton 9.0 (Beta)/version", "1749140930 proton-9.0-4f")
+    put(steam, "steamapps/common/SteamLinuxRuntime_sniper/VERSIONS.txt",
+        "#Name\tVersion\t\tRuntime\tRuntime_Version\tComment\ndepot\t3.0.20260805.254768\t\t\t# Overall version number\npressure-vessel\t0.20260805.0\n")
+    put(steam, "compatibilitytools.d/GE-Proton9-20/version", "1730000000 GE-Proton9-20")
+    return home, steam
+
+
+def test_a_proton_game_reports_build_runtime_and_the_system_around_it(tmp_path):
+    home, steam = build_software(tmp_path)
+    tools = {"proton_dir": str(steam / "steamapps/common/Proton 9.0 (Beta)"), "runtime_dir": str(steam / "steamapps/common/SteamLinuxRuntime_sniper")}
+    sw = telemetry.read_software(tmp_path, home, tools)
+    assert sw["compat"] == "proton" and sw["proton"] == "Proton 9.0 (Beta)" and sw["proton_build"] == "proton-9.0-4f"
+    assert sw["proton_source"] == "steam" and sw["runtime"] == "SteamLinuxRuntime_sniper 3.0.20260805.254768"
+    assert sw["steam_client"] == "1791918634" and sw["steam_channel"] == "steamdeck_stable"
+    assert sw["mesa"] == "26.1.2.221562.radeonsi_26.1.2" and sw["vulkan_driver"] == "26.2.0_devel.222131.steamos_26.05.16"
+    assert sw["gamescope"] == "3.16.23.6" and sw["steam_package"] == "1.0.0.85"
+    assert "bash" not in str(sw) and "mesa-utils" not in str(sw)            # only the packages that matter
+
+
+def test_a_custom_proton_is_marked_and_a_native_game_says_so(tmp_path):
+    home, steam = build_software(tmp_path)
+    ge = telemetry.read_software(tmp_path, home, {"proton_dir": str(steam / "compatibilitytools.d/GE-Proton9-20")})
+    assert ge["proton"] == "GE-Proton9-20" and ge["proton_source"] == "custom" and ge["proton_build"] == "GE-Proton9-20"
+    put(steam, "compatibilitytools.d/GE-Proton9-20/version", "1730000000")          # only a timestamp: no build name to show
+    assert "proton_build" not in telemetry.read_software(tmp_path, home, {"proton_dir": str(steam / "compatibilitytools.d/GE-Proton9-20")})
+    native = telemetry.read_software(tmp_path, home, {"runtime_dir": str(steam / "steamapps/common/SteamLinuxRuntime_sniper")})
+    assert native["compat"] == "native" and "proton" not in native
+    unknown = telemetry.read_software(tmp_path, home, None)
+    assert "compat" not in unknown and unknown["mesa"].startswith("26.1.2")
+
+
+def test_software_names_never_carry_a_path_or_odd_characters(tmp_path):
+    home, steam = build_software(tmp_path)
+    nasty = steam / "compatibilitytools.d/Proton $(rm -rf ~)"
+    put(nasty, "version", "1 evil;`id`\\build")
+    sw = telemetry.read_software(tmp_path, home, {"proton_dir": str(nasty)})
+    for value in sw.values():
+        assert isinstance(value, str) and len(value) <= 48 and not set(value) & set("/$;`\\~")
+
+
+def test_a_bare_system_gives_an_empty_software_section(tmp_path):
+    assert telemetry.read_software(tmp_path, tmp_path / "home/deck", None) == {}
+
+
+def test_arch_style_package_database_is_the_fallback(tmp_path):
+    put(tmp_path, "var/lib/pacman/local/mesa-25.0.1-1/desc", "x")
+    assert telemetry.read_software(tmp_path, tmp_path / "home/deck")["mesa"] == "25.0.1"

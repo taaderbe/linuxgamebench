@@ -21,6 +21,11 @@ from linux_game_benchmark.deck.detect import DeckInfo
 from linux_game_benchmark.deck.session import Event, RecordingSession, Segment
 
 
+def _default_software(game: Optional[deck_game.GameInfo]) -> dict:
+    tools = deck_game.launch_tools(game.app_id) if game else None
+    return telemetry.read_software(tools=tools)
+
+
 @dataclass
 class Active:
     log: Path
@@ -49,6 +54,7 @@ class DeckService:
         status_file: Optional[Path] = None,
         sampler_factory: Callable[[], telemetry.Sampler] = telemetry.Sampler,
         read_env: Callable[[int], dict] = telemetry.read_process_env,
+        read_software: Optional[Callable[[Optional[deck_game.GameInfo]], dict]] = None,
     ):
         self.config = config
         self.deck = deck
@@ -60,6 +66,7 @@ class DeckService:
         self._wait_flushed, self._prepare, self._send = wait_flushed, prepare, send
         self.status_file = status_file
         self._sampler_factory, self._read_env = sampler_factory, read_env
+        self._read_software = read_software or _default_software
         self.tracker = ChordTracker(parse_chord(config.chord))
         self.session = RecordingSession(config.min_seconds, config.cancel_window, config.auto_upload, config.record_seconds)
         self._active: Optional[Active] = None
@@ -127,9 +134,14 @@ class DeckService:
             return {}
         try:
             env = self._read_env(active.game.pid) if active.game and active.game.pid else None
-            return active.sampler.finish(now, env)
+            state = active.sampler.finish(now, env)
         except Exception:
             return {}
+        try:
+            software = self._read_software(active.game)
+        except Exception:                        # the versions are a bonus on top of a bonus
+            software = {}
+        return {**state, "software": software} if software else state
 
     def _finish(self, segment: Segment, now: float, auto: bool = False) -> None:
         self._play("stop")                       # at the moment the recording ends, not after the cutting is done

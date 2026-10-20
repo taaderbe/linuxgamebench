@@ -54,6 +54,7 @@ class Rig:
             send=self._send,
             sampler_factory=lambda: telemetry.Sampler(self.sysroot),
             read_env=lambda pid: {"PROTON_NO_ESYNC": "1", "HOME": "/home/deck"} if pid == 4242 else {},
+            read_software=lambda game: {"compat": "proton", "proton": "Proton 9.0 (Beta)"} if game else {},
         )
 
     def _send(self, kwargs):
@@ -274,8 +275,19 @@ def test_the_upload_carries_what_the_deck_reported(auto):
     assert state["limits"]["tdp_w"] == 15 and state["display"]["internal_mode"] == "1280x800"
     assert state["device"]["steamos"] == "3.7.8" and state["device"]["board"] == "Jupiter"
     assert state["launch"] == {"env": {"PROTON_NO_ESYNC": "1"}}
+    assert state["software"] == {"compat": "proton", "proton": "Proton 9.0 (Beta)"}
     assert "serial" not in str(state).lower()
     assert auto.queue.items()[0].meta["device_state"]["v"] == 1       # kept with the recording, so a retry sends it too
+
+
+def test_a_failing_software_reader_never_loses_the_recording(auto):
+    def broken(game):
+        raise OSError("steam folder unreadable")
+    auto.service._read_software = broken
+    auto.chord(T0 + 20)
+    auto.service.tick(T0 + 81)
+    state = auto.sent[0]["device_state"]
+    assert "software" not in state and state["power"]["source"] == "battery"
 
 
 def test_plugged_in_is_reported(tmp_path):

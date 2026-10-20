@@ -101,6 +101,28 @@ def running_steam_games(proc: Path = Path("/proc")) -> set[int]:
     return ids
 
 
+def launch_tools(app_id: int, proc: Path = Path("/proc")) -> Optional[dict]:
+    """How Steam started this game, read from the 'reaper SteamLaunch AppId=N -- ...' command line:
+    {"proton_dir": ..., "runtime_dir": ...} for a Proton game, {} for a native Linux game, None when the launch is not found."""
+    marker = f"AppId={app_id}"
+    for pid_dir in _pids(proc):
+        try:
+            args = (pid_dir / "cmdline").read_bytes().decode(errors="replace").split("\x00")
+        except OSError:
+            continue
+        if "SteamLaunch" not in args or marker not in args:
+            continue
+        found: dict = {}
+        for arg in args:
+            name = arg.rsplit("/", 1)[-1]
+            if name == "proton" and "/" in arg and "proton_dir" not in found:
+                found["proton_dir"] = arg.rsplit("/", 1)[0]
+            elif name == "_v2-entry-point" and "/" in arg and "runtime_dir" not in found:
+                found["runtime_dir"] = arg.rsplit("/", 1)[0]
+        return found
+    return None
+
+
 def game_name(app_id: int) -> str:
     try:
         from linux_game_benchmark.steam.library_scanner import SteamLibraryScanner
