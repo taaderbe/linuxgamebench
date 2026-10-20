@@ -13,11 +13,14 @@ from PySide6.QtCore import QThread, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QScrollArea,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -25,9 +28,12 @@ from PySide6.QtWidgets import (
 from linux_game_benchmark.deck import config as deck_config
 from linux_game_benchmark.deck import overview as deck_overview
 from linux_game_benchmark.deck import pairing
+from linux_game_benchmark.deck import results as deck_results
 from linux_game_benchmark.deck import setup as deck_setup
 from linux_game_benchmark.gui.constants import (
     ACCENT,
+    BG_CARD,
+    BORDER,
     ERROR,
     SUCCESS,
     TEXT_MUTED,
@@ -99,6 +105,124 @@ class _PairWorker(QThread):
         self.finished_ok.emit(True, session.get_username())
 
 
+class _Job(QThread):
+    """Runs one blocking call (a web request) off the UI thread; `done(result, error_text)`."""
+
+    done = Signal(object, str)
+
+    def __init__(self, func, *args, parent=None) -> None:
+        super().__init__(parent)
+        self._func, self._args = func, args
+
+    def run(self) -> None:
+        try:
+            self.done.emit(self._func(*self._args), "")
+        except Exception as exc:                                    # offline, server error, bad JSON: all just a message
+            self.done.emit(None, str(exc) or exc.__class__.__name__)
+
+
+_LEVEL_COLOR = {"good": SUCCESS, "mid": WARNING, "low": ERROR}
+
+
+def _chip(text: str, checked: bool = False) -> QPushButton:
+    button = QPushButton(text)
+    button.setCheckable(True)
+    button.setChecked(checked)
+    button.setCursor(Qt.CursorShape.PointingHandCursor)
+    button.setProperty("class", "secondary")
+    button.setStyleSheet(
+        f"QPushButton {{ background: transparent; color: {TEXT_SECONDARY}; border: 1px solid {BORDER}; border-radius: 14px; "
+        f"padding: 4px 14px; font-weight: 600; min-height: 22px; }}"
+        f"QPushButton:checked {{ background: {ACCENT}; color: #09090f; border-color: {ACCENT}; }}"
+        f"QPushButton:hover:!checked {{ border-color: {ACCENT}; color: {ACCENT}; }}")
+    return button
+
+
+class _GameRow(QFrame):
+    """One game of the results list: a header that opens to the single runs (fetched when it is opened first)."""
+
+    def __init__(self, row: dict, view: "SteamDeckView") -> None:
+        super().__init__()
+        self.setProperty("class", "card")
+        self._row, self._view, self._loaded, self._job = row, view, False, None
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self._head = QPushButton()
+        self._head.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._head.setStyleSheet("QPushButton { background: transparent; border: 0; text-align: left; padding: 0; }")
+        self._head.setMinimumHeight(58)
+        self._head.clicked.connect(self._toggle)
+        line = QHBoxLayout(self._head)
+        line.setContentsMargins(16, 8, 16, 8)
+        line.setSpacing(14)
+        name = QLabel(row["name"])
+        name.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 15px; font-weight: 700; background: transparent;")
+        models = QLabel("  ".join(f"{deck_results.MODELS.get(k, k)} {v}" for k, v in row["models"].items()) if self._view.model == "all" else "")
+        models.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px; font-weight: 600; background: transparent;")
+        fps = QLabel(f"{round(row['fps'])}")
+        fps.setStyleSheet(f"color: {_LEVEL_COLOR[deck_results.fps_level(row['fps'])]}; font-size: 20px; font-weight: 800; background: transparent;")
+        unit = QLabel("avg FPS")
+        unit.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px; background: transparent;")
+        runs = QLabel(f"{row['runs']} run{'s' if row['runs'] != 1 else ''}")
+        runs.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px; background: transparent;")
+        self._chev = QLabel(">")
+        self._chev.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 16px; font-weight: 700; background: transparent;")
+        for label in (name, models, fps, unit, runs, self._chev):
+            label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        line.addWidget(name, 1)
+        line.addWidget(models)
+        line.addWidget(fps)
+        line.addWidget(unit)
+        line.addWidget(runs)
+        line.addWidget(self._chev)
+        outer.addWidget(self._head)
+
+        self._body = QWidget()
+        self._body_layout = QVBoxLayout(self._body)
+        self._body_layout.setContentsMargins(16, 0, 16, 12)
+        self._body_layout.setSpacing(4)
+        self._body.hide()
+        outer.addWidget(self._body)
+
+    def _toggle(self) -> None:
+        opening = self._body.isHidden()
+        self._body.setVisible(opening)
+        self._chev.setText("v" if opening else ">")
+        if opening and not self._loaded:
+            self._loaded = True
+            self._body_layout.addWidget(_text("Loading runs...", color=TEXT_MUTED))
+            self._job = _Job(deck_results.fetch_runs, self._row["name"], parent=self)
+            self._job.done.connect(self._fill)
+            self._job.start()
+
+    def _fill(self, runs, error: str) -> None:
+        while self._body_layout.count():
+            item = self._body_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        if error:
+            self._loaded = False
+            self._body_layout.addWidget(_text(f"Could not load the runs ({error}). Close and open the game to retry.", color=WARNING))
+            return
+        lines = deck_results.runs_for(runs, self._view.model)
+        if not lines:
+            self._body_layout.addWidget(_text("No runs for this model yet.", color=TEXT_MUTED))
+        for run in lines:
+            text = (f"{run['date']}  -  {run['model']}  -  {run['resolution']}  -  {run['fps']} FPS (1% low {run['low1']})"
+                    + (f"  -  {run['power']}" if run["power"] else "") + f"  -  {run['player']}")
+            label = _text(text, color=TEXT_PRIMARY, size=12)
+            line = QWidget()
+            line_layout = QHBoxLayout(line)
+            line_layout.setContentsMargins(0, 0, 0, 0)
+            line_layout.setSpacing(10)
+            line_layout.addWidget(label, 1)                       # the text takes the room, the button stays at the right edge
+            if run["id"]:
+                line_layout.addWidget(_button("Open", lambda _=False, i=run["id"]: _open(f"{self._view.site}/run/{i}"), secondary=True))
+            self._body_layout.addWidget(line)
+
+
 class _Card(QFrame):
     def __init__(self, title: str, parent=None) -> None:
         super().__init__(parent)
@@ -165,20 +289,41 @@ class SteamDeckView(QWidget):
         self._pair_worker: Optional[_PairWorker] = None
         self._report_until = 0.0            # the answer to a button click stays visible for a while
 
-        scroll = QScrollArea(self)
+        self.site = deck_overview.site_url()
+        self.model = "all"                          # the results filter: all / steam_deck_lcd / steam_deck_oled
+        self._sort = "fps"
+        self._summary: Optional[dict] = None
+        self._summary_job: Optional[_Job] = None
+        self._rows: list[_GameRow] = []
+
+        head = QWidget()
+        head_layout = QVBoxLayout(head)
+        head_layout.setContentsMargins(24, 20, 24, 0)
+        head_layout.setSpacing(10)
+        title = QLabel("Steam Deck")
+        title.setProperty("class", "heading")
+        title.setStyleSheet(f"font-size: 26px; font-weight: 800; color: {TEXT_PRIMARY};")
+        head_layout.addWidget(title)
+        head_layout.addWidget(_text("Record a minute of any game with a controller chord. The run uploads by itself and shows up "
+                                    "in its own Steam Deck category on the website - not mixed with desktop PCs."))
+        self._tab_results = _chip("Results", True)
+        self._tab_device = _chip("This device")
+        tabs = QButtonGroup(self)
+        tabs.setExclusive(True)
+        for button in (self._tab_results, self._tab_device):
+            tabs.addButton(button)
+        self._tab_results.clicked.connect(lambda: self._show_page(0))
+        self._tab_device.clicked.connect(lambda: self._show_page(1))
+        head_layout.addWidget(_row(self._tab_results, self._tab_device))
+
+        self._stack = QStackedWidget()
+        scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("QScrollArea { background: transparent; border: 0; }")
         inner = QWidget()
         column = QVBoxLayout(inner)
-        column.setContentsMargins(24, 20, 24, 20)
+        column.setContentsMargins(24, 16, 24, 20)
         column.setSpacing(16)
-
-        title = QLabel("Steam Deck")
-        title.setProperty("class", "heading")
-        title.setStyleSheet(f"font-size: 26px; font-weight: 800; color: {TEXT_PRIMARY};")
-        column.addWidget(title)
-        column.addWidget(_text("Record a minute of any game with a controller chord. The run uploads by itself and shows up "
-                               "in its own Steam Deck category on the website - not mixed with desktop PCs."))
 
         # --- this device ---------------------------------------------------
         device = _Card("This device")
@@ -233,19 +378,152 @@ class SteamDeckView(QWidget):
         runs_wrap = QWidget()
         runs_wrap.setLayout(self._runs_box)
         runs.add(runs_wrap)
-        runs.add(_row(_button("Steam Deck results", lambda: _open(self._site() + "/steamdeck"), secondary=True)))
+        runs.add(_row(_button("Results on the website", lambda: _open(self._site() + "/steamdeck"), secondary=True)))
         column.addWidget(runs)
 
         column.addStretch(1)
         scroll.setWidget(inner)
+
+        self._stack.addWidget(self._build_results_page())      # 0: what everybody recorded (same as the website)
+        self._stack.addWidget(scroll)                          # 1: this device
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(scroll)
+        outer.setSpacing(0)
+        outer.addWidget(head)
+        outer.addWidget(self._stack, 1)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._refresh)
         self._timer.start(4000)
         self._refresh()
+        first = deck_overview.collect(scan_controllers=False)
+        self._show_page(1 if first.is_deck and not first.ready else 0)       # a Deck that is not set up starts at the setup
+        self._load_summary()
+
+    def _show_page(self, index: int) -> None:
+        self._stack.setCurrentIndex(index)
+        (self._tab_device if index else self._tab_results).setChecked(True)
+
+    # --- results (the website's /steamdeck) ------------------------------------
+
+    def _build_results_page(self) -> QWidget:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: 0; }")
+        inner = QWidget()
+        column = QVBoxLayout(inner)
+        column.setContentsMargins(24, 16, 24, 20)
+        column.setSpacing(14)
+
+        self._stats_box = QHBoxLayout()
+        self._stats_box.setSpacing(10)
+        stats_wrap = QWidget()
+        stats_wrap.setLayout(self._stats_box)
+        column.addWidget(stats_wrap)
+
+        controls = QHBoxLayout()
+        controls.setSpacing(8)
+        self._model_group = QButtonGroup(self)
+        for label, key in (("All", "all"), ("LCD", "steam_deck_lcd"), ("OLED", "steam_deck_oled")):
+            chip = _chip(label, key == "all")
+            chip.clicked.connect(lambda _=False, k=key: self._set_model(k))
+            self._model_group.addButton(chip)
+            controls.addWidget(chip)
+        controls.addSpacing(12)
+        self._sort_group = QButtonGroup(self)
+        for key in deck_results.SORTS:
+            chip = _chip(deck_results.SORT_LABELS[key], key == "fps")
+            chip.clicked.connect(lambda _=False, k=key: self._set_sort(k))
+            self._sort_group.addButton(chip)
+            controls.addWidget(chip)
+        controls.addSpacing(12)
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("Search games...")
+        self._search.setClearButtonEnabled(True)
+        self._search.setMinimumWidth(200)
+        self._search.textChanged.connect(lambda _=None: self._render_games())
+        controls.addWidget(self._search, 1)
+        controls_wrap = QWidget()
+        controls_wrap.setLayout(controls)
+        column.addWidget(controls_wrap)
+
+        self._results_msg = _text("Loading the Steam Deck results...", color=TEXT_MUTED)
+        column.addWidget(self._results_msg)
+        self._games_box = QVBoxLayout()
+        self._games_box.setSpacing(8)
+        games_wrap = QWidget()
+        games_wrap.setLayout(self._games_box)
+        column.addWidget(games_wrap)
+        column.addWidget(_row(_button("Refresh", self._load_summary, secondary=True),
+                              _button("Open on the website", lambda: _open(self.site + "/steamdeck"), secondary=True)))
+        column.addStretch(1)
+        scroll.setWidget(inner)
+        return scroll
+
+    def _set_model(self, key: str) -> None:
+        self.model = key
+        self._render_games()
+
+    def _set_sort(self, key: str) -> None:
+        self._sort = key
+        self._render_games()
+
+    def _load_summary(self) -> None:
+        if self._summary_job is not None and self._summary_job.isRunning():
+            return
+        self.site = deck_overview.site_url()
+        self._results_msg.setText("Loading the Steam Deck results...")
+        self._results_msg.show()
+        self._summary_job = _Job(deck_results.fetch_summary, parent=self)
+        self._summary_job.done.connect(self._on_summary)
+        self._summary_job.start()
+
+    def _on_summary(self, data, error: str) -> None:
+        if error or not isinstance(data, dict):
+            self._results_msg.setText(f"The results could not be loaded ({error or 'unexpected answer'}). Check your connection and press Refresh.")
+            _style(self._results_msg, WARNING)
+            return
+        self._summary = data
+        while self._stats_box.count():
+            item = self._stats_box.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        for label, value in deck_results.stats(data):
+            card = QFrame()
+            card.setProperty("class", "card")
+            box = QVBoxLayout(card)
+            box.setContentsMargins(14, 8, 14, 8)
+            box.setSpacing(0)
+            number = QLabel(value)
+            number.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 20px; font-weight: 800; background: transparent;")
+            caption = QLabel(label.upper())
+            caption.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px; font-weight: 700; background: transparent;")
+            box.addWidget(number)
+            box.addWidget(caption)
+            self._stats_box.addWidget(card)
+        self._stats_box.addStretch(1)
+        self._render_games()
+
+    def _render_games(self) -> None:
+        while self._games_box.count():
+            item = self._games_box.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._rows = []
+        if self._summary is None:
+            return
+        rows = deck_results.games(self._summary, self.model, self._search.text(), self._sort)
+        if not rows:
+            self._results_msg.setText("No Deck runs yet - be the first! Set up your Deck on the 'This device' tab."
+                                      if not self._summary.get("runs") else "No games match this filter.")
+            _style(self._results_msg, TEXT_MUTED)
+            self._results_msg.show()
+            return
+        self._results_msg.hide()
+        for row in rows:
+            widget = _GameRow(row, self)
+            self._rows.append(widget)
+            self._games_box.addWidget(widget)
 
     # --- helpers -------------------------------------------------------------
 

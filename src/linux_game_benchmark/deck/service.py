@@ -260,7 +260,7 @@ def run_forever(service: DeckService, reader, stop: Optional[Callable[[], bool]]
     last_scan = 0.0
     while not stop():
         now = clock()
-        if now - last_scan >= (10.0 if reader.active else 2.0):
+        if now - last_scan >= 2.0:          # Steam re-creates its virtual pad when a game starts: pick the new one up quickly
             last_scan = now
             reader.rescan()
         for code, value in reader.read(0.25):

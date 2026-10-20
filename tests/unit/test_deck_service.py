@@ -294,3 +294,34 @@ def test_a_broken_sysfs_never_costs_the_recording(tmp_path):
     rig.chord(T0 + 20)
     rig.service.tick(T0 + 81)
     assert len(rig.sent) == 1 and rig.sent[0]["device_state"] is None
+
+
+def test_the_pad_list_is_rescanned_every_two_seconds_even_while_a_pad_is_read():
+    """Steam re-creates its virtual pad when a game starts - a rescan every 10 s left a blind spot for the chord."""
+    from linux_game_benchmark.deck.service import run_forever
+
+    class Reader:
+        active = True
+        scans = 0
+
+        def rescan(self):
+            Reader.scans += 1
+
+        def read(self, timeout):
+            return []
+
+    class Service:
+        def on_key(self, *a):
+            pass
+
+        def tick(self, now):
+            pass
+
+    clock = {"t": 0.0}
+
+    def now():
+        clock["t"] += 0.5
+        return clock["t"]
+
+    run_forever(Service(), Reader(), stop=lambda: clock["t"] >= 20, clock=now)
+    assert Reader.scans >= 9, Reader.scans          # ~20 s of loop time -> a scan every 2 s
