@@ -33,23 +33,34 @@ log_interval=0
 # sensors written to the log
 fps
 frametime
-cpu_load
+cpu_stats
 cpu_temp
 cpu_power
 cpu_mhz
-gpu_load
+gpu_stats
 gpu_temp
 gpu_core_clock
 gpu_mem_clock
 gpu_power
-gpu_vram_used
+vram
 ram
 battery
 battery_watt
+battery_time
 fan
 throttling_status
+core_load
+swap
+procmem
+procmem_shared
+procmem_virt
+io_read
+io_write
 resolution
 refresh_rate
+wine
+vulkan_driver
+engine_version
 
 # the overlay stays invisible (it has to exist, MangoHud logs only while the HUD is on)
 alpha=0

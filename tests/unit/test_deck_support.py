@@ -233,3 +233,12 @@ def test_newest_log_ignores_summaries_and_stale_files(tmp_path):
     assert game.newest_log(tmp_path, now=now).name == "b_2026-10-20_18-10-00.csv"
     assert game.newest_log(tmp_path, max_age=2, now=now) is None
     assert game.newest_log(tmp_path / "missing") is None
+
+
+def test_mangohud_template_uses_only_options_mangohud_0_8_knows():
+    """cpu_load / gpu_load / gpu_vram_used are CSV column names, not config options (MangoHud 0.8.4: "Unknown option")."""
+    lines = {l.strip() for l in deck_setup.MANGOHUD_CONF_TEMPLATE.splitlines()}
+    for wrong in ("cpu_load", "gpu_load", "gpu_vram_used", "no_display"):
+        assert wrong not in lines
+    for right in ("cpu_stats", "gpu_stats", "vram", "ram", "battery", "battery_watt", "fan", "frametime", "fps", "alpha=0"):
+        assert right in lines

@@ -28,6 +28,7 @@ def setup(
     yes: bool = typer.Option(False, "--yes", "-y", help="No questions: auto-upload on, pair if needed"),
     no_pair: bool = typer.Option(False, "--no-pair", help="Do not link the account now"),
     force: bool = typer.Option(False, "--force", help="Set up even if this is not a Steam Deck"),
+    seconds: Optional[int] = typer.Option(None, "--seconds", help="Length of one recording in seconds (30-300, default 60)"),
 ) -> None:
     """One-time setup (safe to run again): recorder, background service, sounds, account link."""
     deck = detect_steam_deck()
@@ -39,9 +40,10 @@ def setup(
         raise typer.Exit(1)
 
     cfg = deck_config.DeckConfig.load()
+    if seconds is not None:
+        cfg.record_seconds = float(min(max(seconds, cfg.min_seconds), cfg.max_seconds))
     if not yes:
-        cfg.auto_upload = typer.confirm("Upload every recording automatically (you can cancel within "
-                                        f"{cfg.cancel_window:.0f} s)?", default=True)
+        cfg.auto_upload = typer.confirm("Upload every recording automatically as soon as it is done?", default=True)
     cfg.save()
 
     deck_setup.write_mangohud_conf()
@@ -59,7 +61,8 @@ def setup(
         console.print("[yellow]![/yellow] not linked: recordings are uploaded anonymously. Link later with: lgb deck pair")
 
     console.print(f"\nRecord with: hold [bold]{cfg.chord.split('>')[0].replace('+', ' + ')}[/bold], "
-                  f"then press [bold]{cfg.chord.split('>')[1]}[/bold] (same again to stop).")
+                  f"then press [bold]{cfg.chord.split('>')[1]}[/bold]. It records {cfg.record_seconds:.0f} s, "
+                  f"stops by itself{' and uploads' if cfg.auto_upload else ''} (the same chord ends it earlier).")
     console.print("[bold]Now switch back to Game Mode - that is all.[/bold]")
 
 
@@ -133,7 +136,8 @@ def status() -> None:
     console.print(f"Device:      {'Steam Deck ' + deck.model if deck.is_deck else 'not a Steam Deck'}"
                   f"{' (Game Mode)' if deck.game_mode else ''}")
     console.print(f"Service:     {deck_setup.service_state()}")
-    console.print(f"Chord:       {cfg.chord}   auto-upload: {'on' if cfg.auto_upload else 'off'}")
+    console.print(f"Chord:       {cfg.chord}   recording: {cfg.record_seconds:.0f} s   "
+                  f"auto-upload: {'on' if cfg.auto_upload else 'off'}")
     session = get_current_session()
     console.print(f"Account:     {session.get_username() if session else 'not linked (lgb deck pair)'}")
     reader = GamepadReader()

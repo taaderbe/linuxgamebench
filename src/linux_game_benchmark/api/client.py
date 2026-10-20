@@ -110,6 +110,7 @@ class BenchmarkAPIClient:
         comment: Optional[str] = None,
         game_settings: Optional[Dict[str, str]] = None,
         require_auth: bool = True,
+        device_state: Optional[Dict[str, Any]] = None,
     ) -> UploadResult:
         """
         Upload a benchmark result to the server.
@@ -172,6 +173,8 @@ class BenchmarkAPIClient:
             "comment": comment,
             "game_settings": game_settings,
         }
+        if device_state:
+            payload["device_state"] = device_state          # Steam Deck: power source, battery, TDP, display, versions
 
         try:
             with httpx.Client(timeout=self.timeout) as client:

@@ -69,7 +69,8 @@ def compress_log(path: Path) -> Optional[str]:
         return None
 
 
-def prepare(segment: Path, game: dict, deck: DeckInfo, system_info: Optional[dict] = None) -> tuple[Optional[Prepared], str]:
+def prepare(segment: Path, game: dict, deck: DeckInfo, system_info: Optional[dict] = None,
+            device_state: Optional[dict] = None) -> tuple[Optional[Prepared], str]:
     """Analyse + validate a segment. Returns (Prepared, "") or (None, reason)."""
     from linux_game_benchmark.analysis.metrics import FrametimeAnalyzer
     from linux_game_benchmark.benchmark.validation import validate_benchmark_for_upload
@@ -100,6 +101,7 @@ def prepare(segment: Path, game: dict, deck: DeckInfo, system_info: Optional[dic
         "mangohud_log_compressed": compress_log(segment),
         "comment": None,
         "game_settings": None,
+        "device_state": device_state or None,
     }
     return Prepared(kwargs, {
         "fps_avg": fps.get("average", 0), "seconds": fps.get("duration_seconds", 0),

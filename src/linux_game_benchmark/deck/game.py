@@ -16,6 +16,7 @@ _REAPER = re.compile(r"SteamLaunch\x00AppId=(\d+)|SteamLaunch AppId=(\d+)")
 class GameInfo:
     app_id: int
     name: str
+    pid: Optional[int] = None         # the process that writes the log (its environment holds the launch options)
 
 
 def newest_log(log_dir: Path, max_age: float = 60.0, now: Optional[float] = None) -> Optional[Path]:
@@ -63,6 +64,12 @@ def app_id_from_environ(pid_dir: Path) -> Optional[int]:
 
 def log_writer_app_id(csv_path: Path, proc: Path = Path("/proc")) -> Optional[int]:
     """App id of the process that has the log open."""
+    found = log_writer(csv_path, proc)
+    return found[0] if found else None
+
+
+def log_writer(csv_path: Path, proc: Path = Path("/proc")) -> Optional[tuple[int, int]]:
+    """(app id, pid) of the process that has the log open."""
     target = str(csv_path)
     for pid_dir in _pids(proc):
         try:
@@ -74,7 +81,7 @@ def log_writer_app_id(csv_path: Path, proc: Path = Path("/proc")) -> Optional[in
                 if str(fd.readlink()) == target:
                     app_id = app_id_from_environ(pid_dir)
                     if app_id:
-                        return app_id
+                        return app_id, int(pid_dir.name)
             except OSError:
                 continue
     return None
@@ -106,11 +113,12 @@ def game_name(app_id: int) -> str:
 
 
 def identify(csv_path: Path, proc: Path = Path("/proc")) -> Optional[GameInfo]:
-    app_id = log_writer_app_id(csv_path, proc)
+    found = log_writer(csv_path, proc)
+    app_id, pid = found if found else (None, None)
     if not app_id:
         games = running_steam_games(proc)
         if len(games) == 1:
             app_id = next(iter(games))
     if not app_id:
         return None
-    return GameInfo(app_id=app_id, name=game_name(app_id))
+    return GameInfo(app_id=app_id, name=game_name(app_id), pid=pid)

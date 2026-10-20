@@ -15,7 +15,7 @@ from typing import Callable, Optional
 from linux_game_benchmark.deck import config as deck_config
 from linux_game_benchmark.deck import game as deck_game
 from linux_game_benchmark.deck import queue as deck_queue
-from linux_game_benchmark.deck import segments, upload
+from linux_game_benchmark.deck import segments, telemetry, upload
 from linux_game_benchmark.deck.chord import ChordTracker, parse_chord
 from linux_game_benchmark.deck.detect import DeckInfo
 from linux_game_benchmark.deck.session import Event, RecordingSession, Segment
@@ -26,6 +26,7 @@ class Active:
     log: Path
     log_start: float
     game: Optional[deck_game.GameInfo]
+    sampler: Optional[telemetry.Sampler] = None
 
 
 class DeckService:
@@ -46,6 +47,8 @@ class DeckService:
         prepare: Callable[..., tuple] = upload.prepare,
         send: Callable[[dict], tuple[bool, str, str]] = upload.send,
         status_file: Optional[Path] = None,
+        sampler_factory: Callable[[], telemetry.Sampler] = telemetry.Sampler,
+        read_env: Callable[[int], dict] = telemetry.read_process_env,
     ):
         self.config = config
         self.deck = deck
@@ -56,8 +59,9 @@ class DeckService:
         self._newest_log, self._identify, self._cut = newest_log, identify, cut
         self._wait_flushed, self._prepare, self._send = wait_flushed, prepare, send
         self.status_file = status_file
+        self._sampler_factory, self._read_env = sampler_factory, read_env
         self.tracker = ChordTracker(parse_chord(config.chord))
-        self.session = RecordingSession(config.min_seconds, config.cancel_window, config.auto_upload)
+        self.session = RecordingSession(config.min_seconds, config.cancel_window, config.auto_upload, config.record_seconds)
         self._active: Optional[Active] = None
         self._pending_item: Optional[deck_queue.Item] = None
         self._last_housekeeping = 0.0
@@ -91,7 +95,7 @@ class DeckService:
         elif event.kind == "too_short":
             self._message(f"keep going - a recording needs at least {self.config.min_seconds:.0f} s", "error")
         elif event.kind == "stopped":
-            self._finish(event.segment)
+            self._finish(event.segment, now)
         elif event.kind == "cancelled":
             if self._pending_item is not None:
                 self.queue.update(self._pending_item, status="cancelled")
@@ -105,11 +109,30 @@ class DeckService:
             self.session.reset()
             self._message("no running game found - start a game first", "error")
             return
-        self._active = Active(log, start, self._identify(log))
+        self._active = Active(log, start, self._identify(log), self._start_sampler(now))
         name = self._active.game.name if self._active.game else "unknown game"
-        self._message(f"recording {name}", "start")
+        limit = f" - stops by itself after {self.config.record_seconds:.0f} s" if self.config.record_seconds else ""
+        self._message(f"recording {name}{limit}", "start")
 
-    def _finish(self, segment: Segment) -> None:
+    def _start_sampler(self, now: float) -> Optional[telemetry.Sampler]:
+        try:
+            sampler = self._sampler_factory()
+            sampler.start(now)
+            return sampler
+        except Exception:                        # telemetry is a bonus, never a reason to lose a recording
+            return None
+
+    def _device_state(self, active: "Active", now: float) -> dict:
+        if active.sampler is None:
+            return {}
+        try:
+            env = self._read_env(active.game.pid) if active.game and active.game.pid else None
+            return active.sampler.finish(now, env)
+        except Exception:
+            return {}
+
+    def _finish(self, segment: Segment, now: float, auto: bool = False) -> None:
+        self._play("stop")                       # at the moment the recording ends, not after the cutting is done
         active = self._active
         self._active = None
         if active is None:
@@ -130,26 +153,33 @@ class DeckService:
             self._message(f"could not cut the recording: {exc}", "error")
             return
         auto = self.config.auto_upload
+        upload_now = auto and self.config.cancel_window <= 0
         meta = {
             "created": segment.end, "seconds": round(cut.duration_seconds, 1), "frames": cut.frames,
             "app_id": active.game.app_id if active.game else None,
             "game_name": active.game.name if active.game else None,
             "status": "pending" if auto else "local",
+            "device_state": self._device_state(active, now),
         }
         item = self.queue.add(cut_file, meta)
         game = meta["game_name"] or "unknown game"
-        if auto:
+        if upload_now:
+            self._message(f"saved {game} ({cut.duration_seconds:.0f} s) - uploading", "")
+            self.upload_item(item, now)
+        elif auto:
             self._pending_item = item
             self._message(f"saved {game} ({cut.duration_seconds:.0f} s) - uploading in "
-                          f"{self.config.cancel_window:.0f} s, same chord cancels", "stop")
+                          f"{self.config.cancel_window:.0f} s, same chord cancels", "")
         else:
-            self._message(f"saved {game} ({cut.duration_seconds:.0f} s) on the Deck", "stop")
+            self._message(f"saved {game} ({cut.duration_seconds:.0f} s) on the Deck", "")
 
     # ----- time-driven -----------------------------------------------------------
 
     def _tick(self, now: float) -> None:
         event = self.session.tick(now)
-        if event is not None and event.kind == "upload_due" and self._pending_item is not None:
+        if event is not None and event.kind == "stopped":
+            self._finish(event.segment, now, auto=True)                  # the recording time is up
+        elif event is not None and event.kind == "upload_due" and self._pending_item is not None:
             item, self._pending_item = self._pending_item, None
             self.upload_item(item, now)
         if self.config.auto_upload and self.session.phase.value == "idle" and now - self._last_retry >= 30:
@@ -160,6 +190,11 @@ class DeckService:
             self._last_housekeeping = now
             self.queue.prune()
             deck_queue.prune_logs(self.log_dir, active=self._active.log if self._active else None)
+        if self._active and self._active.sampler and self.session.phase.value == "recording":
+            try:
+                self._active.sampler.sample(now)             # power source, TDP, brightness ... while it runs
+            except Exception:
+                pass
         self._write_status(now)
 
     def upload_item(self, item: deck_queue.Item, now: Optional[float] = None) -> bool:
@@ -170,7 +205,8 @@ class DeckService:
             self.queue.failed_attempt(item, "the game could not be identified", retry=False, now=now)
             self._message("not uploaded: the game could not be identified (recording kept)", "error")
             return False
-        prepared, reason = self._prepare(item.segment, {"app_id": app_id, "name": name}, self.deck)
+        prepared, reason = self._prepare(item.segment, {"app_id": app_id, "name": name}, self.deck,
+                                         device_state=item.meta.get("device_state"))
         if prepared is None:
             self.queue.failed_attempt(item, reason, retry=False, now=now)
             self._message(f"not uploaded: {reason}", "error")
@@ -188,14 +224,17 @@ class DeckService:
 
     # ----- feedback -----------------------------------------------------------------
 
-    def _message(self, text: str, sound: str) -> None:
-        self.last_message = text
-        self.say(text)
-        if self.config.sound:
+    def _play(self, sound: str) -> None:
+        if sound and self.config.sound:
             try:
                 self.play(sound)
             except Exception:
                 pass
+
+    def _message(self, text: str, sound: str) -> None:
+        self.last_message = text
+        self.say(text)
+        self._play(sound)
 
     def _write_status(self, now: float) -> None:
         if not self.status_file:

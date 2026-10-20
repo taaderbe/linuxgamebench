@@ -34,9 +34,11 @@ def config_path() -> Path:
 @dataclass
 class DeckConfig:
     chord: str = DEFAULT_CHORD        # hold two buttons, press a third
-    auto_upload: bool = True          # upload right after a recording (cancel window first)
+    auto_upload: bool = True          # upload as soon as a recording is done
+    record_seconds: float = 60.0      # one chord press records this long, then it finishes by itself
     min_seconds: float = 30.0         # shorter recordings are not accepted (server minimum)
-    cancel_window: float = 10.0       # seconds in which the chord cancels the upload
+    max_seconds: float = 300.0        # longest recording the server accepts
+    cancel_window: float = 0.0        # >0: seconds after the end in which the chord still cancels the upload
     sound: bool = True                # beeps for start / stop / cancel / done / error
 
     @classmethod
@@ -52,6 +54,10 @@ class DeckConfig:
             parse_chord(config.chord)
         except ValueError:
             config.chord = DEFAULT_CHORD         # a hand-edited broken chord must not stop the service
+        try:
+            config.record_seconds = min(max(float(config.record_seconds), config.min_seconds), config.max_seconds)
+        except (TypeError, ValueError):
+            config.record_seconds = 60.0
         return config
 
     def save(self, path: Optional[Path] = None) -> Path:
