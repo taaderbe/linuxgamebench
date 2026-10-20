@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -415,13 +416,14 @@ class SteamDeckView(QWidget):
         column.setContentsMargins(24, 16, 24, 20)
         column.setSpacing(14)
 
-        self._stats_box = QHBoxLayout()
+        self._stat_cards: list[QFrame] = []
+        self._stats_box = QGridLayout()
         self._stats_box.setSpacing(10)
         stats_wrap = QWidget()
         stats_wrap.setLayout(self._stats_box)
         column.addWidget(stats_wrap)
 
-        controls = QHBoxLayout()
+        controls = QHBoxLayout()                 # model + sort chips; the search box gets its own row so nothing is cut off
         controls.setSpacing(8)
         self._model_group = QButtonGroup(self)
         for label, key in (("All", "all"), ("LCD", "steam_deck_lcd"), ("OLED", "steam_deck_oled")):
@@ -436,16 +438,15 @@ class SteamDeckView(QWidget):
             chip.clicked.connect(lambda _=False, k=key: self._set_sort(k))
             self._sort_group.addButton(chip)
             controls.addWidget(chip)
-        controls.addSpacing(12)
-        self._search = QLineEdit()
-        self._search.setPlaceholderText("Search games...")
-        self._search.setClearButtonEnabled(True)
-        self._search.setMinimumWidth(200)
-        self._search.textChanged.connect(lambda _=None: self._render_games())
-        controls.addWidget(self._search, 1)
+        controls.addStretch(1)
         controls_wrap = QWidget()
         controls_wrap.setLayout(controls)
         column.addWidget(controls_wrap)
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("Search games...")
+        self._search.setClearButtonEnabled(True)
+        self._search.textChanged.connect(lambda _=None: self._render_games())
+        column.addWidget(self._search)
 
         self._results_msg = _text("Loading the Steam Deck results...", color=TEXT_MUTED)
         column.addWidget(self._results_msg)
@@ -484,10 +485,9 @@ class SteamDeckView(QWidget):
             _style(self._results_msg, WARNING)
             return
         self._summary = data
-        while self._stats_box.count():
-            item = self._stats_box.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        for card in self._stat_cards:
+            card.deleteLater()
+        self._stat_cards = []
         for label, value in deck_results.stats(data):
             card = QFrame()
             card.setProperty("class", "card")
@@ -500,9 +500,24 @@ class SteamDeckView(QWidget):
             caption.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px; font-weight: 700; background: transparent;")
             box.addWidget(number)
             box.addWidget(caption)
-            self._stats_box.addWidget(card)
-        self._stats_box.addStretch(1)
+            self._stat_cards.append(card)
+        self._layout_stats()
         self._render_games()
+
+    def _layout_stats(self) -> None:
+        """As many cards per row as fit (the Deck's screen is narrow and its text is big)."""
+        while self._stats_box.count():
+            self._stats_box.takeAt(0)
+        columns = max(2, min(len(self._stat_cards) or 1, (self.width() - 48) // 150))
+        for index, card in enumerate(self._stat_cards):
+            self._stats_box.addWidget(card, index // columns, index % columns)
+        for column in range(columns):
+            self._stats_box.setColumnStretch(column, 1)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if getattr(self, "_stat_cards", None):
+            self._layout_stats()
 
     def _render_games(self) -> None:
         while self._games_box.count():

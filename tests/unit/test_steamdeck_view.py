@@ -167,3 +167,24 @@ def test_a_failed_request_is_explained(app, monkeypatch):
 def test_no_runs_yet_invites_to_set_up(app, monkeypatch):
     view = make_view(monkeypatch, DeckOverview(is_deck=False), summary={"runs": 0, "games": 0, "players": 0, "top_games": []})
     assert "No Deck runs yet" in labels(view)
+
+
+def test_nothing_is_cut_off_on_a_narrow_window(app, monkeypatch):
+    """The Deck's screen is 1280x800 with large text: cards wrap, the search row is its own, no horizontal scrolling."""
+    from PySide6.QtWidgets import QScrollArea
+    view = make_view(monkeypatch, DeckOverview(is_deck=False, site="http://s"))
+    view.resize(640, 800)
+    view.show()
+    settle(view)
+    for index in (0, 1):
+        view._show_page(index)
+        settle(view)
+        scroll = view._stack.currentWidget()
+        assert isinstance(scroll, QScrollArea)
+        assert scroll.horizontalScrollBar().maximum() == 0, f"page {index} scrolls sideways at 640 px"
+    view.resize(1200, 800)
+    settle(view)
+    assert len({view._stats_box.getItemPosition(i)[0] for i in range(view._stats_box.count())}) == 1, "five cards fit one row on a wide window"
+    view.resize(400, 800)
+    settle(view)
+    assert len({view._stats_box.getItemPosition(i)[0] for i in range(view._stats_box.count())}) > 1, "cards wrap on a narrow window"
