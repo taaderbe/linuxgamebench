@@ -81,6 +81,14 @@ def test_service_unit_uses_the_appimage_when_there_is_one(monkeypatch):
     assert "Restart=on-failure" in unit and "WantedBy=default.target" in unit
 
 
+def test_service_unit_unpacks_itself_when_the_installer_found_no_fuse(monkeypatch):
+    monkeypatch.setenv("APPIMAGE", "/home/deck/Applications/LinuxGameBench-x86_64.AppImage")
+    monkeypatch.setenv("APPIMAGE_EXTRACT_AND_RUN", "1")
+    assert "Environment=APPIMAGE_EXTRACT_AND_RUN=1\n" in deck_setup.unit_text()
+    monkeypatch.delenv("APPIMAGE_EXTRACT_AND_RUN")
+    assert "APPIMAGE_EXTRACT_AND_RUN" not in deck_setup.unit_text()
+
+
 def test_install_service_without_enabling_only_writes_the_unit(fake_home):
     ok, _ = deck_setup.install_service(enable=False, command="/x/lgb deck run")
     assert ok and "ExecStart=/x/lgb deck run" in deck_setup.unit_path().read_text()

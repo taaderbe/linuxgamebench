@@ -125,12 +125,15 @@ def service_command() -> str:
 
 
 def unit_text(command: Optional[str] = None) -> str:
+    # The one-line installer sets this when FUSE is missing; systemd would not inherit it, so the unit carries it on
+    extract = "Environment=APPIMAGE_EXTRACT_AND_RUN=1\n" if os.environ.get("APPIMAGE_EXTRACT_AND_RUN") == "1" else ""
     return (
         "[Unit]\n"
         "Description=Linux Game Bench - Steam Deck recorder\n"
         "After=default.target\n\n"
         "[Service]\n"
         f"ExecStart={command or service_command()}\n"
+        f"{extract}"
         "Restart=on-failure\n"
         "RestartSec=5\n"
         "Nice=10\n\n"
