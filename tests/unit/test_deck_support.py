@@ -262,3 +262,38 @@ def test_enabling_the_service_also_restarts_it_so_an_update_takes_effect(fake_ho
     monkeypatch.setattr(deck_setup.subprocess, "run", lambda *a, **k: Done())
     ok, _ = deck_setup.install_service(command="/x/lgb deck run")
     assert ok and ("daemon-reload",) in calls and calls.index(("restart", deck_setup.UNIT_NAME)) > calls.index(("enable", "--now", deck_setup.UNIT_NAME))
+
+
+# ----- Game Mode: Steam owns MANGOHUD_CONFIGFILE there, so the options also go in MANGOHUD_CONFIG -------------------
+
+def env_lines(path):
+    return dict(line.split("=", 1) for line in path.read_text().splitlines() if "=" in line and not line.startswith("#"))
+
+
+def test_environment_file_carries_the_logging_options_as_one_variable(fake_home):
+    env = env_lines(deck_setup.write_env_file())
+    options = env["MANGOHUD_CONFIG"].split(",")
+    assert options[0].startswith("output_folder=") and "autostart_log=1" in options and "log_interval=0" in options
+    assert set(deck_setup.SENSORS) <= set(options)
+    assert "no_display" not in options and not any(o.startswith(("alpha", "font_size")) for o in options), \
+        "the overlay look must not travel to Steam's own performance overlay"
+
+
+def test_config_file_and_variable_list_the_same_sensors():
+    in_file = {l.strip() for l in deck_setup.MANGOHUD_CONF_TEMPLATE.splitlines()}
+    assert set(deck_setup.SENSORS) <= in_file
+
+
+def test_steams_performance_overlay_does_not_get_the_variable(fake_home):
+    deck_setup.write_env_file()
+    text = deck_setup.mangoapp_dropin_path().read_text()
+    assert deck_setup.mangoapp_dropin_path().parent.name == "gamescope-mangoapp.service.d"
+    assert "[Service]" in text and "UnsetEnvironment=MANGOHUD_CONFIG" in text
+
+
+def test_removing_the_setup_takes_the_dropin_away_too(fake_home, monkeypatch):
+    monkeypatch.setattr(deck_setup, "_systemctl", lambda *a: None)
+    deck_setup.write_env_file()
+    assert deck_setup.mangoapp_dropin_path().exists()
+    deck_setup.remove_all()
+    assert not deck_setup.mangoapp_dropin_path().exists() and not deck_setup.env_file_path().exists()

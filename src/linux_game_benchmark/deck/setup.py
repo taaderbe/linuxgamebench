@@ -23,6 +23,14 @@ MARKER_START = "### LGB-MANAGED-START"
 MARKER_END = "### LGB-MANAGED-END"
 UNIT_NAME = "lgb-deck.service"
 
+# the sensors that end up in the CSV (a sensor MangoHud is told about is logged; the overlay itself stays invisible)
+SENSORS = [
+    "fps", "frametime", "cpu_stats", "cpu_temp", "cpu_power", "cpu_mhz", "gpu_stats", "gpu_temp", "gpu_core_clock",
+    "gpu_mem_clock", "gpu_power", "vram", "ram", "battery", "battery_watt", "battery_time", "fan", "throttling_status",
+    "core_load", "swap", "procmem", "procmem_shared", "procmem_virt", "io_read", "io_write", "resolution", "refresh_rate",
+    "wine", "vulkan_driver", "engine_version",
+]
+
 MANGOHUD_CONF_TEMPLATE = f"""\
 # Written by Linux Game Bench - the lines between the markers are managed and rewritten by 'lgb deck setup'.
 {MARKER_START}
@@ -31,36 +39,7 @@ autostart_log=1
 log_interval=0
 
 # sensors written to the log
-fps
-frametime
-cpu_stats
-cpu_temp
-cpu_power
-cpu_mhz
-gpu_stats
-gpu_temp
-gpu_core_clock
-gpu_mem_clock
-gpu_power
-vram
-ram
-battery
-battery_watt
-battery_time
-fan
-throttling_status
-core_load
-swap
-procmem
-procmem_shared
-procmem_virt
-io_read
-io_write
-resolution
-refresh_rate
-wine
-vulkan_driver
-engine_version
+{chr(10).join(SENSORS)}
 
 # the overlay stays invisible (it has to exist, MangoHud logs only while the HUD is on)
 alpha=0
@@ -69,6 +48,15 @@ font_size=1
 position=top-right
 {MARKER_END}
 """
+
+# Game Mode points MANGOHUD_CONFIGFILE at a file of its own (Steam's performance overlay, "no_display" by default), so
+# our config file is never read there. MANGOHUD_CONFIG (the same options as one variable) wins over that file.
+MANGOAPP_DROPIN = "gamescope-mangoapp.service.d/linuxgamebench.conf"
+
+
+def mangohud_env_options(out_dir: Optional[Path] = None) -> str:
+    out_dir = out_dir or deck_config.log_dir()
+    return ",".join([f"output_folder={out_dir}", "autostart_log=1", "log_interval=0", *SENSORS])
 
 
 def home() -> Path:
@@ -111,7 +99,22 @@ def write_env_file(path: Optional[Path] = None, conf: Optional[Path] = None) -> 
     path = path or env_file_path()
     conf = conf or mangohud_conf_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"# Written by Linux Game Bench\nMANGOHUD=1\nMANGOHUD_CONFIGFILE={conf}\n")
+    path.write_text("# Written by Linux Game Bench\nMANGOHUD=1\n"
+                    f"MANGOHUD_CONFIGFILE={conf}\n"
+                    f"MANGOHUD_CONFIG={mangohud_env_options()}\n")
+    write_mangoapp_dropin()
+    return path
+
+
+def mangoapp_dropin_path() -> Path:
+    return home() / ".config/systemd/user" / MANGOAPP_DROPIN
+
+
+def write_mangoapp_dropin() -> Path:
+    """Steam's own performance overlay (mangoapp) must not pick up our logging options: it would show all of them."""
+    path = mangoapp_dropin_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("# Written by Linux Game Bench: keeps Steam's performance overlay as it is\n[Service]\nUnsetEnvironment=MANGOHUD_CONFIG\n")
     return path
 
 
@@ -182,7 +185,7 @@ def remove_all() -> list[str]:
         _systemctl("disable", "--now", UNIT_NAME)
     except (OSError, subprocess.SubprocessError):
         pass
-    for path in (unit_path(), env_file_path()):
+    for path in (unit_path(), env_file_path(), mangoapp_dropin_path()):
         if path.exists():
             path.unlink()
             done.append(str(path))
