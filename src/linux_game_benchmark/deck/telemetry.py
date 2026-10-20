@@ -219,6 +219,61 @@ def _os_release(root: Path) -> dict:
     return out
 
 
+def _internal_storage(root: Path) -> dict:
+    """The Deck's own disk, which tells the versions apart: 64 GB eMMC, 256/512 GB NVMe (LCD), 512 GB/1 TB NVMe (OLED).
+
+    The microSD card also shows up as mmcblk*, but its `device/type` says SD; only a `MMC` one is the internal eMMC.
+    Only size, kind and model name are read - never a serial number."""
+    base = root / "sys/block"
+    try:
+        names = sorted(p.name for p in base.iterdir())
+    except OSError:
+        return {}
+    for name in names:
+        if name.startswith("nvme"):
+            kind = "nvme"
+        elif name.startswith("mmcblk") and not re.search(r"(boot\d|rpmb)$", name) and (_read(base / name / "device/type") or "").upper() == "MMC":
+            kind = "emmc"
+        else:
+            continue
+        sectors = _number(base / name / "size")
+        if not sectors:
+            continue
+        model = _read(base / name / "device/model") or _read(base / name / "device/name") or ""
+        return _drop_empty({"storage_type": kind, "storage_gb": round(sectors * 512 / 1e9),
+                            "storage_model": re.sub(r"[^A-Za-z0-9 .,:+()_/\-]", "", model).strip()[:40] or None})
+    return {}
+
+
+def _panel_name(root: Path) -> Optional[str]:
+    """Maker and model of the built-in screen from its EDID (OLED Decks ship with panels from different makers)."""
+    try:
+        entries = sorted((root / "sys/class/drm").iterdir())
+    except OSError:
+        return None
+    for entry in entries:
+        if not re.fullmatch(r"card\d+-eDP-\d+", entry.name):
+            continue
+        try:
+            edid = (entry / "edid").read_bytes()
+        except OSError:
+            continue
+        if len(edid) < 128 or edid[:8] != bytes([0, 255, 255, 255, 255, 255, 255, 0]):
+            continue
+        word = (edid[8] << 8) | edid[9]
+        maker = "".join(chr(64 + ((word >> shift) & 31)) for shift in (10, 5, 0))
+        if not maker.isalpha():
+            continue
+        name = ""
+        for at in (54, 72, 90, 108):
+            block = edid[at:at + 18]
+            if block[:3] == b"\0\0\0" and block[3] == 0xFC:                 # 0xFC = monitor name; 0xFF (serial) is never read
+                name = re.sub(r"[^A-Za-z0-9 .+\-]", "", block[5:].split(b"\n")[0].decode("ascii", "ignore")).strip()
+                break
+        return f"{maker} {name}" if name else f"{maker} {edid[10] | (edid[11] << 8):04X}"
+    return None
+
+
 def read_device(root: Path) -> dict:
     osr = _os_release(root)
     meminfo = _read(root / "proc/meminfo") or ""
@@ -231,6 +286,7 @@ def read_device(root: Path) -> dict:
     vram, gtt = (_number(gpu / n) if gpu is not None else None for n in ("mem_info_vram_total", "mem_info_gtt_total"))
     zram = _number(root / "sys/block/zram0/disksize")
     out = {
+        "product": _read(root / "sys/class/dmi/id/product_name"),
         "board": _read(root / "sys/class/dmi/id/board_name"),
         "bios": _read(root / "sys/class/dmi/id/bios_version"),
         "steamos": osr.get("VERSION_ID"),
@@ -243,6 +299,8 @@ def read_device(root: Path) -> dict:
         "gtt_mb": round(gtt / 1024 / 1024) if gtt else None,
         "zram_mb": round(zram / 1024 / 1024) if zram else None,
         "swappiness": _number(root / "proc/sys/vm/swappiness"),
+        "panel": _panel_name(root),
+        **_internal_storage(root),
     }
     return _drop_empty(out)
 

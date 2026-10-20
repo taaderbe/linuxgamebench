@@ -201,3 +201,87 @@ def test_state_stays_small(tmp_path):
     sampler = telemetry.Sampler(tmp_path, environ={f"PROTON_OPT{i}": "1" for i in range(100)})
     sampler.start(0.0)
     assert len(json.dumps(sampler.finish(60.0))) < 3000
+
+
+# ----- the versions of the Deck: storage and screen ----------------------------------------------------------------------
+
+def edid(maker="SDC", product=0x4166, name=b"ATNA40YK20", serial=b"SERIAL123"):
+    """A 128-byte EDID with a monitor-name and a (private) serial descriptor."""
+    letters = [ord(c) - 64 for c in maker]
+    word = (letters[0] << 10) | (letters[1] << 5) | letters[2]
+    data = bytearray(128)
+    data[:8] = bytes([0, 255, 255, 255, 255, 255, 255, 0])
+    data[8], data[9] = word >> 8, word & 255
+    data[10], data[11] = product & 255, product >> 8
+    for at, tag, text in ((54, 0xFF, serial), (72, 0xFC, name)):
+        data[at:at + 5] = bytes([0, 0, 0, tag, 0])
+        data[at + 5:at + 18] = (text + b"\n").ljust(13, b" ")[:13]
+    return bytes(data)
+
+
+def disk(root, name, gb, kind=None, model=""):
+    sectors = int(gb * 1e9 / 512)
+    put(root, f"sys/block/{name}/size", sectors)
+    if kind:
+        put(root, f"sys/block/{name}/device/type", kind)
+    if model:
+        put(root, f"sys/block/{name}/device/model", model)
+    put(root, f"sys/block/{name}/device/serial", "SECRET-DISK-SERIAL")
+
+
+@pytest.mark.parametrize("layout, expected", [
+    # LCD 64 GB: the eMMC is mmcblk0, a microSD card comes up as mmcblk1
+    ({"mmcblk0": (64, "MMC", "BJTD4R"), "mmcblk1": (512, "SD", "")}, {"storage_type": "emmc", "storage_gb": 64}),
+    # LCD 256/512 GB and OLED 512 GB / 1 TB: NVMe, the microSD card is mmcblk0
+    ({"nvme0n1": (256.06, None, "KINGSTON OM3PDP3256B"), "mmcblk0": (128, "SD", "")}, {"storage_type": "nvme", "storage_gb": 256}),
+    ({"nvme0n1": (512.11, None, "Samsung PM991a"), }, {"storage_type": "nvme", "storage_gb": 512}),
+    ({"nvme0n1": (1024.2, None, "WD PC SN740"), }, {"storage_type": "nvme", "storage_gb": 1024}),
+])
+def test_internal_storage_tells_the_versions_apart(tmp_path, layout, expected):
+    for name, (gb, kind, model) in layout.items():
+        disk(tmp_path, name, gb, kind, model)
+    device = telemetry.read_device(tmp_path)
+    assert {k: device[k] for k in expected} == expected
+    assert "SECRET-DISK-SERIAL" not in str(device)
+
+
+def test_a_microsd_card_alone_is_not_the_internal_disk(tmp_path):
+    disk(tmp_path, "mmcblk0", 128, "SD")
+    disk(tmp_path, "mmcblk0boot0", 4, "MMC")
+    device = telemetry.read_device(tmp_path)
+    assert "storage_type" not in device and "storage_gb" not in device
+
+
+def test_storage_model_is_kept_short_and_plain(tmp_path):
+    disk(tmp_path, "nvme0n1", 512, model="Weird/Model <script>" + "x" * 80)
+    model = telemetry.read_device(tmp_path)["storage_model"]
+    assert len(model) <= 40 and "<" not in model and ">" not in model
+
+
+def test_panel_comes_from_the_screens_edid_without_the_serial(tmp_path):
+    put(tmp_path, "sys/class/drm/card0-eDP-1/status", "connected")
+    (tmp_path / "sys/class/drm/card0-eDP-1/edid").write_bytes(edid("SDC", name=b"ATNA40YK20"))
+    device = telemetry.read_device(tmp_path)
+    assert device["panel"] == "SDC ATNA40YK20" and "SERIAL123" not in str(device)
+
+
+def test_panel_without_a_name_falls_back_to_the_product_code(tmp_path):
+    (tmp_path / "sys/class/drm/card0-eDP-1").mkdir(parents=True)
+    raw = bytearray(edid("BOE", product=0x0B4B))
+    raw[72:90] = bytes(18)                                                   # no monitor-name descriptor
+    (tmp_path / "sys/class/drm/card0-eDP-1/edid").write_bytes(bytes(raw))
+    assert telemetry.read_device(tmp_path)["panel"] == "BOE 0B4B"
+
+
+def test_external_monitors_and_broken_edids_are_ignored(tmp_path):
+    (tmp_path / "sys/class/drm/card0-DP-1").mkdir(parents=True)
+    (tmp_path / "sys/class/drm/card0-DP-1/edid").write_bytes(edid("DEL", name=b"U2720Q"))
+    (tmp_path / "sys/class/drm/card0-eDP-1").mkdir(parents=True)
+    (tmp_path / "sys/class/drm/card0-eDP-1/edid").write_bytes(b"\x00" * 128)
+    assert "panel" not in telemetry.read_device(tmp_path)
+
+
+def test_product_name_is_part_of_the_device(tmp_path):
+    build_deck(tmp_path)
+    put(tmp_path, "sys/class/dmi/id/product_name", "Galileo")
+    assert telemetry.read_device(tmp_path)["product"] == "Galileo"
