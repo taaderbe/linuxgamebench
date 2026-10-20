@@ -1104,16 +1104,25 @@ def _print_rerun_hints(system_info: dict) -> None:
         pass
 
 
+def _overlay_visible(flag: Optional[bool]) -> bool:
+    """--show-hud / --no-hud win; without a flag the saved "hide overlay" choice decides (default: visible)."""
+    if flag is not None:
+        return flag
+    from linux_game_benchmark.config.preferences import Preferences
+    return not Preferences().hide_overlay
+
+
 @app.command()
 def benchmark(
     game: str = typer.Argument(
         ...,
         help="Game App ID or name to benchmark",
     ),
-    show_hud: bool = typer.Option(
-        True,
+    show_hud: Optional[bool] = typer.Option(
+        None,
         "--show-hud/--no-hud",
-        help="Show MangoHud overlay during benchmark",
+        help="Show or hide the MangoHud overlay during the benchmark. Hidden = invisible but everything is still "
+             "recorded. Default: your saved choice (GUI checkbox), otherwise shown.",
     ),
     duration: int = typer.Option(
         300,
@@ -1283,6 +1292,8 @@ def benchmark(
     # Require latest version for upload functionality
     require_latest_version()
 
+    show_hud = _overlay_visible(show_hud)
+
     import time
     from linux_game_benchmark.steam.library_scanner import SteamLibraryScanner
     from linux_game_benchmark.benchmark.game_launcher import GameLauncher
@@ -1334,7 +1345,10 @@ def benchmark(
 
     console.print("[bold yellow]Controls:[/bold yellow]")
     console.print("  [bold red]Shift+F2[/bold red] → START recording")
-    console.print("  [bold red]Shift+F2[/bold red] → STOP recording\n")
+    console.print("  [bold red]Shift+F2[/bold red] → STOP recording")
+    if not show_hud:
+        console.print("  [dim]Overlay hidden - nothing is drawn on screen, everything is still recorded.[/dim]")
+    console.print()
 
     # Setup
     system_info = get_system_info()

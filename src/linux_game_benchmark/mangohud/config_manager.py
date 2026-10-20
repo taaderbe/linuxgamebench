@@ -10,6 +10,18 @@ from pathlib import Path
 from typing import Optional
 
 
+# An overlay nobody can see that MangoHud still logs from. `no_display` would be the obvious choice but MangoHud
+# 0.8 stops writing the log with it (only a visible - i.e. rendered - overlay logs), so the overlay stays on and is
+# drawn fully transparent. Every sensor listed in the config is still recorded.
+HIDDEN_OVERLAY_LINES = [
+    "# overlay hidden (still recording): transparent instead of no_display, which would stop the log",
+    "alpha=0",
+    "background_alpha=0",
+    "font_size=1",
+    "position=top-left",
+]
+
+
 class MangoHudConfigManager:
     """Manages MangoHud configuration for benchmarking."""
 
@@ -159,7 +171,7 @@ class MangoHudConfigManager:
                 "vram",
             ])
         else:
-            config_lines.append("no_display")
+            config_lines.extend(HIDDEN_OVERLAY_LINES)
 
         # Log EVERYTHING MangoHud can provide
         config_lines.extend([

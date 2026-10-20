@@ -17,6 +17,7 @@ class Preferences:
         "default_upload": "y",
         "default_continue": "c",
         "default_duration": 30,  # seconds
+        "hide_overlay": False,  # benchmark with an invisible MangoHud overlay (it still records everything)
         "gpu_preference": None,  # PCI address of preferred GPU
         "gpu_display_name": None,  # Display name for preferred GPU
         # Game Settings Defaults
@@ -130,6 +131,16 @@ class Preferences:
         if 30 <= value <= 300:
             self._prefs["default_duration"] = value
             self._save()
+
+    @property
+    def hide_overlay(self) -> bool:
+        """True: the MangoHud overlay is drawn invisible during benchmarks (recording is unaffected)."""
+        return bool(self._prefs.get("hide_overlay", False))
+
+    @hide_overlay.setter
+    def hide_overlay(self, value: bool) -> None:
+        self._prefs["hide_overlay"] = bool(value)
+        self._save()
 
     @property
     def gpu_preference(self) -> Optional[str]:
