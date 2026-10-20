@@ -490,11 +490,12 @@ class SettingsView(QWidget):
         import json
         from pathlib import Path
         try:
+            from linux_game_benchmark.gui.app import default_ui_scale
             state_file = Path.home() / ".config" / "lgb" / "gui_state.json"
-            scale = 2.0
+            scale = default_ui_scale()
             if state_file.exists():
                 data = json.loads(state_file.read_text())
-                scale = data.get("ui_scale", 2.0)
+                scale = data.get("ui_scale", scale)
             self._initial_scale = scale  # Store initial scale for comparison
             for i in range(self._scale_combo.count()):
                 if abs(self._scale_combo.itemData(i) - scale) < 0.01:
@@ -514,8 +515,9 @@ class SettingsView(QWidget):
             data = {}
             if state_file.exists():
                 data = json.loads(state_file.read_text())
-            old_scale = data.get("ui_scale", 2.0)
-            new_scale = self._scale_combo.currentData() or 2.0
+            from linux_game_benchmark.gui.app import default_ui_scale
+            old_scale = data.get("ui_scale", default_ui_scale())
+            new_scale = self._scale_combo.currentData() or default_ui_scale()
             data["ui_scale"] = new_scale
             state_file.parent.mkdir(parents=True, exist_ok=True)
             state_file.write_text(json.dumps(data, indent=2))

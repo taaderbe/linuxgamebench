@@ -188,3 +188,28 @@ def test_nothing_is_cut_off_on_a_narrow_window(app, monkeypatch):
     view.resize(400, 800)
     settle(view)
     assert len({view._stats_box.getItemPosition(i)[0] for i in range(view._stats_box.count())}) > 1, "cards wrap on a narrow window"
+
+
+def test_a_deck_starts_the_app_at_normal_size_everything_else_at_the_4k_default(monkeypatch, tmp_path):
+    from linux_game_benchmark.deck import detect
+    from linux_game_benchmark.gui import app as gui_app
+
+    class Info:
+        def __init__(self, is_deck): self.is_deck = is_deck
+
+    monkeypatch.setattr(detect, "detect_steam_deck", lambda: Info(True))
+    assert gui_app.default_ui_scale() == 1.0
+    monkeypatch.setattr(detect, "detect_steam_deck", lambda: Info(False))
+    assert gui_app.default_ui_scale() == 2.0
+
+    monkeypatch.setattr(detect, "detect_steam_deck", lambda: Info(True))
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    monkeypatch.delenv("QT_SCALE_FACTOR", raising=False)
+    gui_app._apply_ui_scale()
+    import os
+    assert os.environ["QT_SCALE_FACTOR"] == "1.0"
+    (tmp_path / ".config/lgb").mkdir(parents=True)
+    (tmp_path / ".config/lgb/gui_state.json").write_text('{"ui_scale": 1.5}')
+    gui_app._apply_ui_scale()
+    assert os.environ["QT_SCALE_FACTOR"] == "1.5", "a scale the user chose always wins"
+    os.environ.pop("QT_SCALE_FACTOR", None)

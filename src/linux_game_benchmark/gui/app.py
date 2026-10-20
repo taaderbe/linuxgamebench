@@ -92,22 +92,29 @@ def run_app() -> int:
     return app.exec()
 
 
-def _apply_ui_scale():
-    """Apply saved UI scale factor via environment variable.
+def default_ui_scale() -> float:
+    """2.0 (shown as "100%") suits a 4K desktop; a Steam Deck's 1280x800 screen needs 1.0, or the window is 640 px wide."""
+    try:
+        from linux_game_benchmark.deck.detect import detect_steam_deck
+        return 1.0 if detect_steam_deck().is_deck else 2.0
+    except Exception:
+        return 2.0
 
-    Default is 2.0 (shown as "100%" to the user).
-    """
+
+def _apply_ui_scale():
+    """Apply the saved UI scale factor via environment variable (default: see default_ui_scale)."""
     import os
+    default = default_ui_scale()
     try:
         import json
         state_file = Path.home() / ".config" / "lgb" / "gui_state.json"
-        scale = 2.0  # default: what user sees as "100%"
+        scale = default
         if state_file.exists():
             data = json.loads(state_file.read_text())
-            scale = data.get("ui_scale", 2.0)
+            scale = data.get("ui_scale", default)
         os.environ["QT_SCALE_FACTOR"] = str(scale)
     except Exception:
-        os.environ["QT_SCALE_FACTOR"] = "2.0"
+        os.environ["QT_SCALE_FACTOR"] = str(default)
 
 
 def _get_version() -> str:
