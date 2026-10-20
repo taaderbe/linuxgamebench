@@ -159,6 +159,8 @@ def install_service(enable: bool = True, command: Optional[str] = None) -> tuple
         result = _systemctl("enable", "--now", UNIT_NAME)
         if result.returncode != 0:
             return False, (result.stderr or result.stdout).strip() or "systemctl failed"
+        # `--now` leaves a service that already runs alone: after an update it would keep the old program in memory
+        _systemctl("restart", UNIT_NAME)
         subprocess.run(["loginctl", "enable-linger", os.environ.get("USER", "")],
                        capture_output=True, timeout=15)          # best effort: keeps the service alive between sessions
     except (OSError, subprocess.SubprocessError) as exc:

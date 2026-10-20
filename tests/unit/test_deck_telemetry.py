@@ -285,3 +285,10 @@ def test_product_name_is_part_of_the_device(tmp_path):
     build_deck(tmp_path)
     put(tmp_path, "sys/class/dmi/id/product_name", "Galileo")
     assert telemetry.read_device(tmp_path)["product"] == "Galileo"
+
+
+@pytest.mark.parametrize("reported, shown", [("800x1280", "1280x800"), ("1280x800", "1280x800"), ("1920x1080", "1920x1080")])
+def test_the_built_in_screen_is_shown_in_landscape(tmp_path, reported, shown):
+    put(tmp_path, "sys/class/drm/card0-eDP-1/status", "connected")
+    put(tmp_path, "sys/class/drm/card0-eDP-1/modes", reported + "\n")
+    assert telemetry.read_display(tmp_path)["internal_mode"] == shown

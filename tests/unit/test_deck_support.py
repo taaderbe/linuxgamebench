@@ -250,3 +250,15 @@ def test_mangohud_template_uses_only_options_mangohud_0_8_knows():
         assert wrong not in lines
     for right in ("cpu_stats", "gpu_stats", "vram", "ram", "battery", "battery_watt", "fan", "frametime", "fps", "alpha=0"):
         assert right in lines
+
+
+def test_enabling_the_service_also_restarts_it_so_an_update_takes_effect(fake_home, monkeypatch):
+    calls = []
+
+    class Done:
+        returncode, stdout, stderr = 0, "", ""
+
+    monkeypatch.setattr(deck_setup, "_systemctl", lambda *args: calls.append(args) or Done())
+    monkeypatch.setattr(deck_setup.subprocess, "run", lambda *a, **k: Done())
+    ok, _ = deck_setup.install_service(command="/x/lgb deck run")
+    assert ok and ("daemon-reload",) in calls and calls.index(("restart", deck_setup.UNIT_NAME)) > calls.index(("enable", "--now", deck_setup.UNIT_NAME))

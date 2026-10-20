@@ -177,6 +177,14 @@ def read_limits(root: Path) -> dict:
 
 # ----- display ------------------------------------------------------------------------------------------------------------
 
+def _landscape(mode: Optional[str]) -> Optional[str]:
+    """The Deck's panel is built upright and the kernel reports 800x1280; people know it as 1280x800."""
+    match = re.fullmatch(r"(\d+)x(\d+)", mode or "")
+    if match and int(match.group(1)) < int(match.group(2)):
+        return f"{match.group(2)}x{match.group(1)}"
+    return mode
+
+
 def read_display(root: Path) -> dict:
     out: dict = {}
     bl_base = root / "sys/class/backlight"
@@ -198,7 +206,7 @@ def read_display(root: Path) -> dict:
             mode = (_read(entry / "modes") or "").splitlines()
             mode = mode[0] if mode else None
             if match.group(1).lower().startswith("edp"):
-                out["internal_mode"] = mode
+                out["internal_mode"] = _landscape(mode)
             else:
                 external.append(mode or match.group(1))
     except OSError:
