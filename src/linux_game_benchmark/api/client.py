@@ -154,6 +154,7 @@ class BenchmarkAPIClient:
                 "proton_build": system_info.get("proton_build"),
                 "proton_tool": system_info.get("proton_tool"),
                 "proton_build_ts": system_info.get("proton_build_ts"),
+                "device_class": system_info.get("device_class"),
             },
             "metrics": {
                 "fps_avg": metrics.get("fps_avg") or metrics.get("average", 0),

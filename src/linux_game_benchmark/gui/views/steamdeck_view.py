@@ -1,9 +1,7 @@
-"""Steam Deck Auto-Mode view.
+"""Steam Deck view: one-click setup of the recorder (same code as `lgb deck setup`) and a status overview.
 
-Configures MangoHud for continuous background logging so every game on a
-Steam Deck (or any Linux gaming setup) records FPS / TDP / temps without
-the user having to launch the CLI manually. New runs that show up in the
-log directory can be auto-uploaded.
+The recorder logs every game from the start (MangoHud flight recorder); a controller chord marks the
+part to keep and uploads it. See linux_game_benchmark.deck.
 """
 
 from __future__ import annotations
@@ -39,165 +37,52 @@ from linux_game_benchmark.gui.constants import (
 )
 
 
-# ----- Filesystem helpers / config writing ------------------------------------
+# ----- Setup (shared with the CLI) ------------------------------------------------
 
-MANGOHUD_DIR = Path(os.path.expanduser("~/.config/MangoHud"))
-MANGOHUD_CONF = MANGOHUD_DIR / "MangoHud.conf"
-ENV_DIR = Path(os.path.expanduser("~/.config/environment.d"))
-ENV_FILE = ENV_DIR / "linuxgamebench.conf"
-LGB_LOG_DIR = Path("/tmp/mangohud-bench-lgb")
+from linux_game_benchmark.deck import config as deck_config  # noqa: E402
+from linux_game_benchmark.deck import setup as deck_setup  # noqa: E402
 
-_STEAMDECK_GPU_PATTERNS = (
-    "custom apu 0405",
-    "custom gpu 0405",
-    "van gogh",
-    "custom gpu 1435",
-    "sephiroth",
-)
-_STEAMDECK_CPU_PATTERNS = ("custom apu 0405", "custom apu 0932")
-
-MANGOHUD_TEMPLATE = """\
-# Written by Linux Game Bench GUI - lines under the LGB marker are managed.
-### LGB-MANAGED-START
-output_folder={out_dir}
-output_format=csv
-autostart_log=1
-log_interval=0
-
-# Logged sensors (CSV) - the on-screen overlay below is intentionally minimal
-fps
-frametime
-gpu_load
-gpu_temp
-gpu_junction_temp
-gpu_core_clock
-gpu_mem_clock
-gpu_mem_temp
-gpu_power
-gpu_power_limit
-gpu_voltage
-gpu_fan
-cpu_load
-cpu_temp
-cpu_mhz
-cpu_power
-core_load
-ram
-vram
-swap
-battery
-battery_watt
-battery_time
-fan
-throttling_status
-io_read
-io_write
-resolution
-refresh_rate
-
-# Minimal overlay: tiny "FPS: xx" top-right
-fps_only=1
-position=top-right
-font_size=14
-background_alpha=0
-no_small_font=1
-text_outline=1
-text_outline_thickness=1.2
-### LGB-MANAGED-END
-"""
+LGB_LOG_DIR = deck_config.log_dir()
 
 
 def detect_steamdeck() -> tuple[bool, str]:
-    """Cheap detection - reads /sys DMI and /proc/cpuinfo. Returns
-    (is_deck, label). label is "LCD", "OLED" or "" / a hint string."""
-    # /sys DMI is the most reliable on SteamOS
-    try:
-        product = (Path("/sys/devices/virtual/dmi/id/product_name")
-                   .read_text(errors="replace").strip())
-        if product:
-            if "Jupiter" in product:
-                return True, "LCD"
-            if "Galileo" in product:
-                return True, "OLED"
-    except OSError:
-        pass
-
-    # Fallback: cpuinfo + GPU device strings
-    cpuinfo = ""
-    try:
-        cpuinfo = Path("/proc/cpuinfo").read_text(errors="replace").lower()
-    except OSError:
-        pass
-    for pat in _STEAMDECK_CPU_PATTERNS:
-        if pat in cpuinfo:
-            return True, "Steam Deck"
-
-    # GPU - look at /sys/class/drm/card*/device/vendor + device
-    for sysfs in Path("/sys/class/drm").glob("card*"):
-        try:
-            dev = (sysfs / "device" / "device").read_text().strip()
-            if dev in ("0x163f", "0x1435"):  # Van Gogh / Sephiroth PCI ids
-                return True, ("OLED" if dev == "0x1435" else "LCD")
-        except OSError:
-            continue
-
-    return False, ""
+    """(is_deck, label) with label "LCD", "OLED", "Steam Deck" or "" - see deck.detect."""
+    from linux_game_benchmark.deck.detect import detect_steam_deck
+    info = detect_steam_deck()
+    return info.is_deck, info.label
 
 
 def mangohud_is_managed() -> bool:
-    if not MANGOHUD_CONF.exists():
-        return False
-    try:
-        return "### LGB-MANAGED-START" in MANGOHUD_CONF.read_text(errors="replace")
-    except OSError:
-        return False
+    return deck_setup.is_managed(deck_setup.mangohud_conf_path())
 
 
 def write_mangohud_config() -> tuple[bool, str]:
-    """Write the LGB-managed MangoHud config and the environment.d file
-    that exposes MANGOHUD=1 to every user-session process."""
+    """Everything `lgb deck setup` does without questions: recorder config, environment, sounds, service."""
     try:
-        MANGOHUD_DIR.mkdir(parents=True, exist_ok=True)
-        LGB_LOG_DIR.mkdir(parents=True, exist_ok=True)
-        ENV_DIR.mkdir(parents=True, exist_ok=True)
-
-        if MANGOHUD_CONF.exists() and not mangohud_is_managed():
-            backup = MANGOHUD_CONF.with_suffix(f".conf.lgb-backup-{int(time.time())}")
-            shutil.copy(MANGOHUD_CONF, backup)
-
-        MANGOHUD_CONF.write_text(MANGOHUD_TEMPLATE.format(out_dir=LGB_LOG_DIR))
-        ENV_FILE.write_text(
-            "# Written by Linux Game Bench GUI\n"
-            "MANGOHUD=1\n"
-            f"MANGOHUD_CONFIGFILE={MANGOHUD_CONF}\n"
-        )
-        return True, "Configured. Restart your Deck once - then every game logs automatically."
+        deck_config.DeckConfig.load().save()
+        deck_setup.write_mangohud_conf()
+        deck_setup.write_env_file()
+        deck_setup.ensure_sounds()
+        ok, message = deck_setup.install_service()
+        if not ok:
+            return False, f"Recorder configured, but the background service failed: {message}"
+        return True, "Done. Switch back to Game Mode - then every game is recorded and you start/stop with the controller chord."
     except Exception as e:
         return False, f"Setup failed: {e}"
 
 
 def remove_mangohud_config() -> tuple[bool, str]:
-    """Undo write_mangohud_config(): drop env file, restore most recent
-    non-LGB backup if there is one, otherwise remove the file."""
     try:
-        if ENV_FILE.exists():
-            ENV_FILE.unlink()
-        if MANGOHUD_CONF.exists() and mangohud_is_managed():
-            backups = sorted(MANGOHUD_DIR.glob("MangoHud.conf.lgb-backup-*"))
-            if backups:
-                shutil.copy(backups[-1], MANGOHUD_CONF)
-            else:
-                MANGOHUD_CONF.unlink()
-        return True, "LGB MangoHud config removed. Reboot to drop MANGOHUD=1."
+        deck_setup.remove_all()
+        return True, "Removed. Switch to Desktop Mode and back (or reboot) to stop MangoHud loading."
     except Exception as e:
         return False, f"Teardown failed: {e}"
 
 
 def latest_log_file() -> Optional[Path]:
-    if not LGB_LOG_DIR.exists():
-        return None
-    files = sorted(LGB_LOG_DIR.glob("*.csv"), key=lambda p: p.stat().st_mtime, reverse=True)
-    return files[0] if files else None
+    from linux_game_benchmark.deck.game import newest_log
+    log = newest_log(deck_config.log_dir(), max_age=24 * 3600)
+    return log
 
 
 # ----- View widget -----------------------------------------------------------
@@ -238,7 +123,7 @@ def _value(text: str, color: str = TEXT_PRIMARY) -> QLabel:
 
 
 class SteamDeckView(QWidget):
-    """Steam Deck Auto-Mode setup + status."""
+    """Steam Deck recorder setup + status."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -253,15 +138,15 @@ class SteamDeckView(QWidget):
         inner_layout.setSpacing(16)
 
         # Heading
-        header = QLabel("Steam Deck Auto-Mode")
+        header = QLabel("Steam Deck")
         header.setProperty("class", "heading")
         header.setStyleSheet(f"font-size: 26px; font-weight: 800; color: {TEXT_PRIMARY};")
         inner_layout.addWidget(header)
 
         subtitle = _muted(
-            "Configure MangoHud to log every game automatically. Pair with the "
-            "passive upload below and your runs land on linuxgamebench.com/steamdeck "
-            "without any manual step."
+            "Set up the recorder once: every game is logged in the background and you "
+            "start/stop a recording with a controller chord (default: hold LB + RB, press VIEW). "
+            "The recording is uploaded automatically unless you cancel it."
         )
         inner_layout.addWidget(subtitle)
 
@@ -280,20 +165,21 @@ class SteamDeckView(QWidget):
         inner_layout.addWidget(self._detection_card)
 
         # --- Setup card ----------------------------------------------------
-        setup_card = _Card("MangoHud Setup")
+        setup_card = _Card("Recorder")
         self._status_label = _value("Checking...")
         setup_card.add(self._status_label)
         self._setup_help = _muted(
-            "Writes ~/.config/MangoHud/MangoHud.conf with continuous logging "
-            "and an environment.d entry so MangoHud loads into every game "
-            "(Steam, Heroic, Lutris, native) after the next reboot. Any existing "
-            "config is backed up to MangoHud.conf.lgb-backup-<timestamp>."
+            "Writes ~/.config/MangoHud/MangoHud.conf (invisible overlay, logging on), "
+            "an environment.d entry so MangoHud loads into your games, and a background "
+            "service for the chord. Everything stays in your home folder. An existing "
+            "MangoHud config is backed up to MangoHud.conf.lgb-backup-<timestamp>. "
+            "Switch to Game Mode afterwards (no reboot needed)."
         )
         setup_card.add(self._setup_help)
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
-        self._setup_btn = QPushButton("Enable Auto-Mode")
+        self._setup_btn = QPushButton("Set up recorder")
         self._setup_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._setup_btn.clicked.connect(self._on_setup_click)
         btn_row.addWidget(self._setup_btn)
@@ -317,9 +203,8 @@ class SteamDeckView(QWidget):
         self._log_size_label = _value("--", TEXT_SECONDARY)
         status_card.add(self._log_size_label)
         self._refresh_hint = _muted(
-            "If 'logging' stays empty after a reboot, double-check that the "
-            "game was started via Steam and that you rebooted at least once "
-            "after the setup."
+            "If 'logging' stays empty, start a game from Game Mode once after the setup. "
+            "More details: run 'lgb deck status' in a terminal."
         )
         status_card.add(self._refresh_hint)
         inner_layout.addWidget(status_card)
@@ -365,8 +250,8 @@ class SteamDeckView(QWidget):
                 f"color: {SUCCESS}; font-size: 16px; font-weight: 700; background: transparent;"
             )
             self._detection_hint.setText(
-                "We'll log all the Deck-specific sensors (battery watts, fan, "
-                "junction temp, throttling). LCD vs OLED is detected from your APU."
+                "Deck runs are tagged as Steam Deck and shown in their own category "
+                "on the website (not mixed with desktop PCs)."
             )
         else:
             self._detection_label.setText("Not a Steam Deck")
@@ -374,26 +259,27 @@ class SteamDeckView(QWidget):
                 f"color: {WARNING}; font-size: 16px; font-weight: 700; background: transparent;"
             )
             self._detection_hint.setText(
-                "Auto-Mode still works on any Linux gaming setup. The sensor set "
-                "is just slightly less Deck-specific."
+                "The recorder also works on a normal Linux PC, but only a real Steam Deck "
+                "is tagged as Steam Deck."
             )
 
         managed = mangohud_is_managed()
-        env_present = ENV_FILE.exists()
+        env_present = deck_setup.env_file_path().exists()
         if managed and env_present:
-            self._status_label.setText("✓ Active")
+            state = deck_setup.service_state()
+            self._status_label.setText("✓ Active" if state == "active" else f"Configured - service is {state}")
             self._status_label.setStyleSheet(
                 f"color: {SUCCESS}; font-size: 15px; font-weight: 600; background: transparent;"
             )
             self._teardown_btn.setEnabled(True)
-            self._setup_btn.setText("Re-apply config")
+            self._setup_btn.setText("Repair / re-apply")
         else:
             self._status_label.setText("Not configured")
             self._status_label.setStyleSheet(
                 f"color: {WARNING}; font-size: 15px; font-weight: 600; background: transparent;"
             )
             self._teardown_btn.setEnabled(False)
-            self._setup_btn.setText("Enable Auto-Mode")
+            self._setup_btn.setText("Set up recorder")
 
         latest = latest_log_file()
         if latest:

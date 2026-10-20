@@ -163,6 +163,10 @@ app = typer.Typer(
     add_completion=False,
     rich_markup_mode="rich",
 )
+
+# Steam Deck commands: lgb deck setup | status | pair | chord | run | upload | remove
+from linux_game_benchmark.deck.cli import deck_app  # noqa: E402
+app.add_typer(deck_app, name="deck")
 console = Console()
 
 # Show game settings panel after --help

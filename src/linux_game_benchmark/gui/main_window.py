@@ -77,6 +77,7 @@ class MainWindow(QMainWindow):
             GamesView, BenchmarkView, MyBenchmarksView,
             SystemInfoView, SteamDeckView, SettingsView,
         )
+        from linux_game_benchmark.gui.views.steamdeck_view import detect_steamdeck
         self._stack.addWidget(GamesView())
         self._stack.addWidget(BenchmarkView())
         self._stack.addWidget(MyBenchmarksView())
@@ -84,8 +85,11 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(SteamDeckView())
         self._stack.addWidget(SettingsView())
 
-        # Select first tab
-        self._select_nav(0)
+        # If we're running on a Steam Deck, jump straight into the Deck view
+        # so the user lands on the relevant setup screen instead of the
+        # generic Games library.
+        is_deck, _ = detect_steamdeck()
+        self._select_nav(4 if is_deck else 0)
 
         # Navigate to Benchmark tab when a game is selected
         self._signals.game_selected.connect(self._on_game_selected)
