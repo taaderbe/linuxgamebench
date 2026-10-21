@@ -70,10 +70,12 @@ def test_the_deck_upload_keeps_its_fixed_names():
     assert flat["device_vendor"] == "Valve" and flat["device_product"] == "Galileo"
 
 
-def test_the_api_client_forwards_the_dmi_strings():
+def test_the_api_client_forwards_the_dmi_strings(tmp_path, monkeypatch):
     from unittest.mock import MagicMock, patch
 
     from linux_game_benchmark.api.client import BenchmarkAPIClient
+    from linux_game_benchmark.config.settings import settings
+    monkeypatch.setattr(type(settings), "AUTH_FILE", tmp_path / "auth.json")       # never the real login of whoever runs the tests
 
     response = MagicMock(status_code=200)
     response.json.return_value = {"id": 7, "message": "ok"}

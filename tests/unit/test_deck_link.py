@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 from linux_game_benchmark.deck.detect import DeckInfo
 from linux_game_benchmark.deck import cli as deck_cli
+from linux_game_benchmark.deck import config as deck_config
 from linux_game_benchmark.deck import pairing
 from linux_game_benchmark.deck import setup as deck_setup
 from linux_game_benchmark.deck.ttyinput import EnterWatcher
@@ -99,6 +100,7 @@ def test_the_interrupt_replaces_the_sleep(monkeypatch):
 def deck_env(monkeypatch, tmp_path):
     monkeypatch.setattr(deck_setup, "home", lambda: tmp_path / "home")
     monkeypatch.setenv("LGB_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(deck_config, "config_path", lambda: tmp_path / "deck.json")          # not the real ~/.config/lgb/deck.json
     monkeypatch.setenv("APPIMAGE", "/home/deck/Applications/LinuxGameBench.AppImage")
     monkeypatch.delenv("LGB_ANON", raising=False)
     monkeypatch.setattr(deck_setup, "install_service", lambda **k: (True, "service enabled and started"))
