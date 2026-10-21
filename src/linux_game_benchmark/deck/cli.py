@@ -81,7 +81,6 @@ def setup(
                   f"then press [bold]{cfg.chord.split('>')[1]}[/bold]. It records {cfg.record_seconds:.0f} s, "
                   f"stops by itself{' and uploads' if cfg.auto_upload else ''} (the same chord ends it earlier).")
     console.print("[bold]Now switch back to Game Mode - that is all.[/bold]")
-    console.print("[dim]If the controller does not react after the switch, press the Steam button once - that is SteamOS, not Linux Game Bench.[/dim]")
 
 
 def _redeem_ticket(ticket: str) -> bool:
