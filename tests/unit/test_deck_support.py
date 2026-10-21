@@ -293,9 +293,46 @@ def test_steams_performance_overlay_does_not_get_the_variable(fake_home):
 def test_removing_the_setup_takes_the_dropin_away_too(fake_home, monkeypatch):
     monkeypatch.setattr(deck_setup, "_systemctl", lambda *a: None)
     deck_setup.write_env_file()
-    assert deck_setup.mangoapp_dropin_path().exists()
+    assert deck_setup.mangoapp_dropin_path().exists() and deck_setup.steam_dropin_path().exists()
     deck_setup.remove_all()
     assert not deck_setup.mangoapp_dropin_path().exists() and not deck_setup.env_file_path().exists()
+    assert not deck_setup.steam_dropin_path().exists(), "Steam has to start in Game Mode exactly as SteamOS ships it again"
+
+
+def test_steam_in_game_mode_starts_without_the_desktop_mode_variable(fake_home):
+    """Found on the real Deck: the user manager lives on between the modes (linger), so Steam in Game Mode inherited MANGOHUD=1;
+    the MangoHud layer in a Proton game cannot read Steam's config file there and drew its default overlay next to Steam's."""
+    deck_setup.write_env_file()
+    path = deck_setup.steam_dropin_path()
+    lines = path.read_text().splitlines()
+    assert path.parent.name == "steam-launcher.service.d" and "[Service]" in lines
+    assert "UnsetEnvironment=MANGOHUD" in lines
+    assert "MANGOHUD_CONFIGFILE" not in path.read_text(), "Steam's own config file (the overlay level) must stay"
+    assert "ExecStart" not in path.read_text(), "Steam is started exactly as SteamOS ships it - nothing but the variable changes"
+
+
+def fake_proc(tmp_path, *processes):
+    """A /proc with the given (comm, {env}) processes."""
+    for number, (comm, env) in enumerate(processes, start=100):
+        entry = tmp_path / str(number)
+        entry.mkdir()
+        (entry / "comm").write_text(comm + "\n")
+        (entry / "environ").write_bytes(b"\0".join(f"{k}={v}".encode() for k, v in env.items()) + b"\0")
+    return tmp_path
+
+
+@pytest.mark.parametrize("env, expected", [
+    ({"STEAM_USE_MANGOAPP": "1", "MANGOHUD": "1"}, True),                  # Game Mode, variable still there
+    ({"STEAM_USE_MANGOAPP": "1", "MANGOHUD_CONFIGFILE": "/run/x"}, False),  # Game Mode, as SteamOS ships it
+    ({"MANGOHUD": "1"}, None),                                               # Desktop Mode: the variable is wanted there
+])
+def test_a_leaked_desktop_variable_in_game_mode_is_noticed(tmp_path, env, expected):
+    assert deck_setup.game_mode_layer_leak(fake_proc(tmp_path, ("steam", env))) is expected
+
+
+def test_the_leak_check_says_nothing_without_a_readable_steam_process(tmp_path):
+    assert deck_setup.game_mode_layer_leak(fake_proc(tmp_path, ("bash", {"MANGOHUD": "1"}))) is None
+    assert deck_setup.game_mode_layer_leak(tmp_path / "does-not-exist") is None
 
 
 # ----- Game Mode: the overlay program (mangoapp) logs every game, also the OpenGL ones ----------------------------------

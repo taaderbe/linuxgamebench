@@ -243,6 +243,9 @@ def status() -> None:
     game_mode = ("every game is recorded (OpenGL, Vulkan, Proton); with Steam's performance overlay on, a red dot shows meanwhile"
                  if overlay_ok else "not set up (lgb deck setup)")
     console.print(f"Game Mode:   {game_mode}")
+    if deck.game_mode and deck_setup.game_mode_layer_leak():
+        console.print("[yellow]Game Mode:   Steam still carries MANGOHUD=1 - games show a second overlay next to Steam's. "
+                      "Run: " + deck_setup.app_command() + " deck setup, then switch to Desktop Mode and back once.[/yellow]")
     items = Queue(deck_config.queue_dir()).items()
     console.print(f"Recordings:  {len(items)}  (" + ", ".join(
         f"{n} {s}" for s, n in sorted({s: sum(1 for i in items if i.status == s) for s in {i.status for i in items}}.items())) + ")")

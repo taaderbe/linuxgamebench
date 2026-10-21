@@ -54,6 +54,8 @@ position=top-right
 # (it sees every game): its drop-in below only says where the log goes - a log is written when the recorder asks for one.
 MANGOAPP_DROPIN = "gamescope-mangoapp.service.d/linuxgamebench.conf"
 MANGOAPP_UNIT = "gamescope-mangoapp.service"
+# Steam itself runs as this unit in Game Mode only (never in Desktop Mode); every game inherits the environment it gets.
+STEAM_DROPIN = "steam-launcher.service.d/linuxgamebench.conf"
 MANGOAPP_FALLBACK_COMMAND = "/usr/bin/mangoapp"
 
 
@@ -104,15 +106,55 @@ def write_mangohud_conf(path: Optional[Path] = None, out_dir: Optional[Path] = N
 
 
 def write_env_file(path: Optional[Path] = None, conf: Optional[Path] = None) -> Path:
-    """MANGOHUD=1 and our config for everything the user session starts (read at the next login). Desktop Mode only: Game Mode
-    brings its own config file, and the layer in a game logs nothing there (Steam's overlay program records instead)."""
+    """MANGOHUD=1 and our config for everything the user session starts (read at the next login). Meant for Desktop Mode: the
+    user manager keeps running between the modes (linger), so Steam in Game Mode would inherit MANGOHUD=1 as well - and the
+    MangoHud layer inside a game cannot read Steam's config file there (it is not visible inside the game's container), so it
+    would draw its default overlay next to Steam's own. The Steam drop-in below takes the variable away again in Game Mode,
+    where Steam's overlay program records instead."""
     path = path or env_file_path()
     conf = conf or mangohud_conf_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("# Written by Linux Game Bench\nMANGOHUD=1\n"
                     f"MANGOHUD_CONFIGFILE={conf}\n")
     write_mangoapp_dropin()
+    write_steam_dropin()
     return path
+
+
+def steam_dropin_path() -> Path:
+    return home() / ".config/systemd/user" / STEAM_DROPIN
+
+
+def write_steam_dropin() -> Path:
+    """Game Mode starts Steam without MANGOHUD (as SteamOS ships it): no MangoHud layer in the games, only Steam's own overlay."""
+    path = steam_dropin_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "# Written by Linux Game Bench: Game Mode shows only Steam's own performance overlay - the MangoHud layer that MANGOHUD=1 (Desktop Mode) switches on inside the games would draw a second one\n"
+        "[Service]\n"
+        "UnsetEnvironment=MANGOHUD\n")
+    return path
+
+
+def game_mode_layer_leak(proc: Path = Path("/proc")) -> Optional[bool]:
+    """Game Mode only: does the running Steam client carry MANGOHUD=1, so that every game loads the MangoHud layer and draws a
+    second overlay next to Steam's? True = yes (the drop-in is missing or SteamOS changed how Steam is started), False = no,
+    None = cannot tell (no readable Steam process, or it is not the Game Mode one). Read from /proc, so it also notices a
+    change after a SteamOS update."""
+    try:
+        entries = [e for e in proc.iterdir() if e.name.isdigit()]
+    except OSError:
+        return None
+    for entry in entries:
+        try:
+            if (entry / "comm").read_text().strip() != "steam":
+                continue
+            env = dict(item.partition(b"=")[::2] for item in (entry / "environ").read_bytes().split(b"\0") if item)
+        except OSError:
+            continue
+        if env.get(b"STEAM_USE_MANGOAPP") == b"1":                    # set by SteamOS' Game Mode session only
+            return env.get(b"MANGOHUD") == b"1"
+    return None
 
 
 def mangoapp_dropin_path() -> Path:
@@ -276,7 +318,7 @@ def remove_all() -> list[str]:
         _systemctl("disable", "--now", UNIT_NAME)
     except (OSError, subprocess.SubprocessError):
         pass
-    for path in (unit_path(), env_file_path(), mangoapp_dropin_path(), link_launcher_path()):
+    for path in (unit_path(), env_file_path(), mangoapp_dropin_path(), steam_dropin_path(), link_launcher_path()):
         if path.exists():
             path.unlink()
             done.append(str(path))
