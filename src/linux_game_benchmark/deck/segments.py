@@ -1,8 +1,8 @@
-"""Cut one recording out of a MangoHud log that runs for the whole game session.
+"""Cut one recording out of a MangoHud log.
 
-The Deck keeps MangoHud logging all the time ("flight recorder"); the controller chord only
-sets two time marks. The segment between the marks is written to its own CSV in the same
-format the benchmark pipeline already reads (system lines, header, rows; elapsed rebased to 0).
+Desktop Mode: MangoHud logs all the time ("flight recorder") and the controller chord only sets two time marks. Game Mode: the
+log was started with the chord, so it begins at the first mark. Either way the segment between the marks is written to its own
+CSV in the format the benchmark pipeline already reads (system lines, header, rows; elapsed rebased to 0).
 """
 
 from __future__ import annotations
@@ -103,6 +103,28 @@ def cut_log(src: Path | str, start_epoch: float, end_epoch: float, dst: Path | s
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text("".join(head) + "".join(rows))
     return Cut(frames=len(rows), duration_seconds=(last_ns - (first_ns or 0)) / NS)
+
+
+def wait_until_closed(src: Path | str, timeout: float = 3.0, poll: float = 0.1) -> bool:
+    """A log that was ended on command: MangoHud writes the `_summary.csv` next to it when it closes the file. Wait for that
+    (or for the file to stop growing) before reading it."""
+    src = Path(src)
+    summary = src.with_name(src.stem + "_summary.csv")
+    deadline = time.monotonic() + timeout
+    last, steady = -1, 0
+    while time.monotonic() < deadline:
+        if summary.exists():
+            return True
+        try:
+            size = src.stat().st_size
+        except OSError:
+            return False
+        steady = steady + 1 if size == last else 0
+        if steady >= 3:
+            return True
+        last = size
+        time.sleep(poll)
+    return False
 
 
 def wait_until_flushed(src: Path | str, end_epoch: float, log_start: float,

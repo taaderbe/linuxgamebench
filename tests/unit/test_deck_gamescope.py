@@ -176,3 +176,25 @@ def test_host_tools_do_not_inherit_the_appimages_library_path(monkeypatch):
 
 def test_a_missing_tool_is_just_nothing():
     assert gamescope.run_tool(["/nonexistent/xprop", "-root"]) == ""
+
+
+# ----- what is in front ---------------------------------------------------------------------------------------------------
+
+def test_the_app_in_front_is_read_from_the_control_display():
+    asked = []
+
+    def run(args):
+        asked.append(args)
+        return "GAMESCOPE_FOCUSED_APP(CARDINAL) = 1942280\n" if "-display" in args and args[args.index("-display") + 1] == ":0" else ""
+    assert gamescope.focused_app(run=run, displays=lambda: [":1", ":0"]) == 1942280
+    assert all(a[0] == "xprop" and a[-1] == "GAMESCOPE_FOCUSED_APP" for a in asked)
+
+
+def test_steams_own_interface_is_769():
+    assert gamescope.focused_app(run=lambda a: "GAMESCOPE_FOCUSED_APP(CARDINAL) = 769\n", displays=lambda: [":0"]) == 769
+
+
+def test_an_unreadable_front_app_is_none_not_a_guess():
+    assert gamescope.focused_app(run=lambda a: "", displays=lambda: [":0", ":1"]) is None
+    assert gamescope.focused_app(run=lambda a: "GAMESCOPE_FOCUSED_APP:  not found.\n", displays=lambda: [":0"]) is None
+    assert gamescope.focused_app(run=lambda a: "x", displays=lambda: []) is None

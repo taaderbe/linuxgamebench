@@ -35,20 +35,25 @@ def write_log(directory: Path, seconds=300, fps=60, name="eldenring.exe_2026-10-
 
 
 class Rig:
-    def __init__(self, tmp_path, mangoapp=False, **config):
+    def __init__(self, tmp_path, overlay=False, **config):
         self.log_dir = tmp_path / "logs"
         self.log = write_log(self.log_dir)
-        # Game Mode: Steam's overlay program writes a log of its own (it sees every game, also OpenGL ones)
-        self.mangoapp_dir = tmp_path / "mangoapp-logs" if mangoapp else None
-        self.mangoapp_log = write_log(self.mangoapp_dir, name="mangoapp_2026-10-20_18-00-00.csv") if mangoapp else None
-        self.newest_by_dir: dict = {}                 # per folder: what "the newest log" is (default: self.newest for every folder)
+        # Game Mode: Steam's overlay program sees every game and writes a log of its own - when it is told to
+        self.overlay_dir = tmp_path / "mangoapp-logs" if overlay else None
+        self.overlay_running = overlay
+        self.overlay_calls: list = []                 # what the service told the overlay program: True = start a log, False = end it
+        self.overlay_fails: set = set()               # {True} / {False}: mangohudctl answers "no" to that command
+        self.overlay_writes = True                    # the overlay program really opens a log file when told to
+        self.overlay_files: list = []
+        self.logging_now = False
+        self.front = None                             # what Gamescope shows in front: None = cannot be read, 769 = Steam's menu
         self.running = {1245620}                      # app ids Steam is running right now
-        self.restarts: list = []                      # times the overlay program was asked to start a new log
         self.cfg = deck_config.DeckConfig(**config)
         self.sounds, self.said, self.sent = [], [], []
         self.send_result = (True, "https://linuxgamebench.com/benchmark/1", "")
         self.display_seen: dict = {}                  # what "Gamescope" says about the game's window; nothing by default
         self.display_looks = 0
+        self.closed_waits: list = []
         self.game = GameInfo(1245620, "Elden Ring", pid=4242)
         self.sysroot = build_deck(tmp_path / "sysroot")
         self.newest = self.log
@@ -56,10 +61,12 @@ class Rig:
         self.service = DeckService(
             self.cfg, DECK, queue=self.queue, log_dir=self.log_dir, work_dir=tmp_path / "work",
             play=self.sounds.append, say=self.said.append,
-            newest_log=lambda d: self.newest_by_dir[d] if d in self.newest_by_dir else self.newest,
+            newest_log=lambda d: self.newest,
             identify=lambda p: self.game,
-            mangoapp_log_dir=self.mangoapp_dir, running_games=lambda: set(self.running),
-            restart_mangoapp=lambda: self.restarts.append(1),
+            mangoapp_log_dir=self.overlay_dir, running_games=lambda: set(self.running),
+            overlay_running=lambda: self.overlay_running, overlay_log=self._overlay_log, focused_app=lambda: self.front,
+            describe=lambda app_id: self.game if self.game and self.game.app_id == app_id else GameInfo(app_id, f"App {app_id}"),
+            wait_closed=self._wait_closed, overlay_wait=0.2,
             wait_flushed=lambda *a, **k: True,
             prepare=lambda seg, game, deck, device_state=None: upload.prepare(seg, game, deck, system_info=SYSTEM, device_state=device_state),
             send=self._send,
@@ -68,6 +75,21 @@ class Rig:
             read_software=lambda game: {"compat": "proton", "proton": "Proton 9.0 (Beta)"} if game else {},
             read_display=self._read_display,
         )
+
+    def _overlay_log(self, on):
+        """mangohudctl set log_session true|false: a new file per start, nothing in between."""
+        self.overlay_calls.append(on)
+        if on in self.overlay_fails:
+            return False
+        if on and self.overlay_writes and not self.logging_now:
+            name = f"mangoapp_2026-10-20_18-00-{len(self.overlay_files):02d}.csv"
+            self.overlay_files.append(write_log(self.overlay_dir, name=name))      # elapsed 0 = the moment of the command
+        self.logging_now = on
+        return True
+
+    def _wait_closed(self, path):
+        self.closed_waits.append(path)
+        return True
 
     def _read_display(self, game):
         self.display_looks += 1
@@ -395,104 +417,299 @@ def test_a_failing_look_never_costs_the_recording(rig):
     assert len(rig.sent) == 1 and rig.sent[0]["resolution"] == "1280x800"
 
 
-# ----- Game Mode: OpenGL games are only visible to Steam's overlay program -------------------------------------------------
+
+
+# ----- Game Mode: every game is recorded through Steam's overlay program, one log per recording ----------------------------
 
 @pytest.fixture
-def opengl(tmp_path):
-    """An OpenGL game (Brotato): MangoHud's Vulkan layer is not in it, so only the overlay program's log exists."""
-    r = Rig(tmp_path, mangoapp=True, cancel_window=10.0, record_seconds=0)
-    r.newest_by_dir = {r.log_dir: None, r.mangoapp_dir: r.mangoapp_log}
-    r.game = GameInfo(1942280, "Brotato")             # no pid: the log belongs to the overlay program, not to the game
-    r.running = {1942280}
-    return r
+def overlay(tmp_path):
+    """Game Mode: Elden Ring (Proton, Vulkan) runs and Steam's overlay program logs on command."""
+    return Rig(tmp_path, overlay=True, cancel_window=10.0, record_seconds=0)
 
 
-def test_an_opengl_game_is_recorded_from_the_overlay_log(opengl):
-    opengl.chord(T0 + 20)
-    assert opengl.sounds == ["start"] and opengl.service.session.phase.value == "recording"
-    opengl.chord(T0 + 80)
-    assert opengl.statuses() == ["pending"]
-    opengl.service.tick(T0 + 91)
-    assert len(opengl.sent) == 1 and opengl.sent[0]["steam_app_id"] == 1942280 and opengl.sent[0]["game_name"] == "Brotato"
-    assert opengl.sent[0]["metrics"]["fps_avg"] == pytest.approx(60, abs=1)
+def cut_sources(rig):
+    seen = []
+    real = rig.service._cut
+    rig.service._cut = lambda src, *a, **k: (seen.append(Path(src)), real(src, *a, **k))[1]
+    return seen
 
 
-def test_a_vulkan_game_still_uses_its_own_log(tmp_path):
-    r = Rig(tmp_path, mangoapp=True, cancel_window=10.0, record_seconds=0)
-    r.newest_by_dir = {r.log_dir: r.log, r.mangoapp_log.parent: r.mangoapp_log}         # both exist: the game's own wins
-    cut_from = []
-    real_cut = r.service._cut
-    r.service._cut = lambda src, *a, **k: (cut_from.append(Path(src)), real_cut(src, *a, **k))[1]
-    r.chord(T0 + 20)
-    r.chord(T0 + 80)
-    assert cut_from == [r.log] and r.statuses() == ["pending"]
+def test_nothing_is_logged_before_the_chord(overlay):
+    for second in range(0, 30, 3):
+        overlay.service.tick(T0 + second)
+    assert overlay.overlay_calls == [] and overlay.overlay_files == []
+    overlay.chord(T0 + 30)
+    assert overlay.overlay_calls == [True] and len(overlay.overlay_files) == 1
 
 
-def test_the_overlay_log_in_the_menu_is_not_a_game(opengl):
-    """Steam's menu is logged too: with no game running the chord must not start a recording of the menu."""
-    opengl.running = set()
-    opengl.game = None
-    opengl.chord(T0 + 20)
-    assert opengl.sounds == ["error"] and opengl.service.session.phase.value == "idle"
-    assert "no running game found" in opengl.said[-1]
+def test_one_recording_is_one_log_started_by_the_chord_and_ended_with_it(overlay):
+    seen = cut_sources(overlay)
+    overlay.chord(T0 + 20)
+    assert overlay.sounds == ["start"] and overlay.service.session.phase.value == "recording"
+    overlay.chord(T0 + 80)
+    assert overlay.overlay_calls == [True, False] and overlay.logging_now is False
+    assert seen == overlay.overlay_files and overlay.statuses() == ["pending"]
+    overlay.service.tick(T0 + 91)
+    payload = overlay.sent[0]
+    assert payload["steam_app_id"] == 1245620 and payload["game_name"] == "Elden Ring"
+    assert payload["metrics"]["fps_avg"] == pytest.approx(60, abs=1)
+    assert payload["metrics"]["duration_seconds"] == pytest.approx(60, abs=1)
+    assert 3590 <= len(payload["frametimes"]) <= 3610
 
 
-def test_two_running_games_are_not_guessed(opengl):
-    opengl.running = {1942280, 1245620}
-    opengl.game = None                                  # identify cannot tell
-    opengl.chord(T0 + 20)
-    assert opengl.sounds == ["error"] and "could not tell which game" in opengl.said[-1]
+def test_the_log_is_closed_before_it_is_read(overlay):
+    order = []
+    overlay.service._wait_closed = lambda path: order.append("closed")
+    real = overlay.service._cut
+    overlay.service._cut = lambda *a, **k: (order.append("cut"), real(*a, **k))[1]
+    overlay.chord(T0 + 20)
+    overlay.chord(T0 + 80)
+    assert order == ["closed", "cut"] and overlay.logging_now is False
 
 
-def test_a_game_without_any_log_explains_itself(opengl):
-    """Desktop Mode / an old setup: a game runs but nothing writes data for it - say so, do not just beep."""
-    opengl.newest_by_dir = {opengl.log_dir: None, opengl.mangoapp_dir: None}
-    opengl.chord(T0 + 20)
-    assert opengl.sounds == ["error"] and opengl.service.session.phase.value == "idle"
-    assert "no performance data for this game" in opengl.said[-1] and "OpenGL" in opengl.said[-1] and "Game Mode" in opengl.said[-1]
+def test_the_time_limit_ends_the_log_by_itself(tmp_path):
+    rig = Rig(tmp_path, overlay=True)                       # defaults: 60 s, upload right away
+    rig.chord(T0 + 20)
+    rig.service.tick(T0 + 50)
+    assert rig.overlay_calls == [True] and rig.sent == []
+    rig.service.tick(T0 + 80.4)
+    assert rig.overlay_calls == [True, False] and rig.statuses() == ["uploaded"]
+    assert rig.sent[0]["metrics"]["duration_seconds"] == pytest.approx(60, abs=1)
+    rig.service.tick(T0 + 200)
+    assert rig.overlay_calls == [True, False]               # nothing more is ever started or ended
 
 
-def test_no_game_and_no_log_still_says_start_a_game(opengl):
-    opengl.newest_by_dir = {opengl.log_dir: None, opengl.mangoapp_dir: None}
-    opengl.running = set()
-    opengl.chord(T0 + 20)
-    assert "no running game found - start a game first" in opengl.said[-1]
+def test_a_chord_that_comes_too_early_leaves_the_log_running(overlay):
+    overlay.chord(T0 + 20)
+    overlay.chord(T0 + 25)
+    assert overlay.sounds == ["start", "error"] and overlay.overlay_calls == [True]
+    overlay.chord(T0 + 70)
+    assert overlay.overlay_calls == [True, False] and overlay.statuses() == ["pending"]
 
 
-def test_a_game_closed_during_the_recording_saves_nothing_from_the_menu_frames(opengl):
-    opengl.chord(T0 + 20)
-    opengl.running = set()                              # the game quit, Steam's menu is on screen (and in the log)
-    opengl.chord(T0 + 80)
-    assert opengl.statuses() == [] and opengl.sounds[-1] == "error" and "game was closed" in opengl.said[-1]
+def test_a_vulkan_game_keeps_its_launch_options_and_window(overlay):
+    """The game's process is found by the app id, so the launch options and the render size are read as with the game's own log."""
+    overlay.display_seen = {"render_mode": "1280x720"}
+    overlay.chord(T0 + 20)
+    overlay.chord(T0 + 80)
+    overlay.service.tick(T0 + 91)
+    state = overlay.sent[0]["device_state"]
+    assert state["launch"] == {"env": {"PROTON_NO_ESYNC": "1"}} and state["display"]["render_mode"] == "1280x720"
 
 
-def test_without_an_overlay_folder_nothing_changes(tmp_path):
-    r = Rig(tmp_path, cancel_window=10.0, record_seconds=0)           # older setups: no overlay log at all
-    r.newest = None
-    r.running = set()
-    r.chord(T0 + 20)
-    assert r.sounds == ["error"] and "no running game found" in r.said[-1]
+def test_an_opengl_game_is_recorded_the_same_way(overlay):
+    overlay.game = GameInfo(1942280, "Brotato")             # a game whose process could not be found
+    overlay.running = {1942280}
+    overlay.chord(T0 + 20)
+    overlay.chord(T0 + 80)
+    overlay.service.tick(T0 + 91)
+    assert overlay.sent[0]["steam_app_id"] == 1942280 and overlay.sent[0]["game_name"] == "Brotato"
+    assert overlay.overlay_calls == [True, False]
 
 
-def test_a_huge_overlay_log_makes_the_overlay_program_start_a_new_one_when_idle(opengl, monkeypatch):
-    from linux_game_benchmark.deck import service as deck_service
-    monkeypatch.setattr(deck_service, "MANGOAPP_LOG_LIMIT", 1000)         # the fixture log is a few MB
-    opengl.service._tidy_mangoapp_logs()
-    assert opengl.restarts == [1]
+def test_without_a_running_game_no_log_is_started(overlay):
+    overlay.running = set()
+    overlay.chord(T0 + 20)
+    assert overlay.sounds == ["error"] and overlay.service.session.phase.value == "idle"
+    assert "no running game found - start a game first" in overlay.said[-1] and overlay.overlay_calls == []
 
 
-def test_the_overlay_program_is_left_alone_while_recording(opengl, monkeypatch):
-    from linux_game_benchmark.deck import service as deck_service
-    monkeypatch.setattr(deck_service, "MANGOAPP_LOG_LIMIT", 1000)
-    opengl.chord(T0 + 20)
-    opengl.service._tidy_mangoapp_logs()
-    assert opengl.restarts == []                                          # a restart would end the log under the recording
+def test_two_running_games_the_one_in_front_is_recorded(overlay):
+    overlay.running = {1245620, 1942280}
+    overlay.front = 1942280
+    overlay.game = GameInfo(1942280, "Brotato")
+    overlay.chord(T0 + 20)
+    overlay.chord(T0 + 80)
+    overlay.service.tick(T0 + 91)
+    assert overlay.sent[0]["steam_app_id"] == 1942280
 
 
-def test_old_overlay_logs_go_but_the_running_one_stays(opengl):
-    old = write_log(opengl.mangoapp_dir, seconds=1, name="mangoapp_2026-10-10_08-00-00.csv")
+@pytest.mark.parametrize("front", [None, 769, 4711])
+def test_two_running_games_with_none_in_front_are_not_guessed(overlay, front):
+    overlay.running = {1245620, 1942280}
+    overlay.front = front
+    overlay.chord(T0 + 20)
+    assert overlay.sounds == ["error"] and "could not tell which game" in overlay.said[-1] and overlay.overlay_calls == []
+
+
+def test_steams_menu_in_front_starts_nothing(overlay):
+    """The overlay program logs what is in front: with the menu there it would log the menu."""
+    overlay.front = 769
+    overlay.chord(T0 + 20)
+    assert overlay.sounds == ["error"] and overlay.service.session.phase.value == "idle"
+    assert "not in front" in overlay.said[-1] and overlay.overlay_calls == []
+    overlay.front = 1245620
+    overlay.chord(T0 + 30)                                  # works as soon as the game is back
+    assert overlay.service.session.phase.value == "recording"
+
+
+def test_a_log_the_overlay_program_refuses_to_start_is_explained(overlay):
+    overlay.overlay_fails = {True}
+    overlay.chord(T0 + 20)
+    assert overlay.sounds == ["error"] and overlay.service.session.phase.value == "idle"
+    assert "could not start the log" in overlay.said[-1] and overlay.overlay_calls == [True]
+    overlay.overlay_fails = set()
+    overlay.chord(T0 + 30)
+    assert overlay.service.session.phase.value == "recording"
+
+
+def test_a_log_that_never_shows_up_is_ended_again(overlay):
+    overlay.overlay_writes = False                          # e.g. the drop-in is not active yet: the file lands somewhere else
+    overlay.chord(T0 + 20)
+    assert overlay.sounds == ["error"] and overlay.service.session.phase.value == "idle"
+    assert "did not start a log" in overlay.said[-1] and overlay.overlay_calls == [True, False]
+
+
+def test_a_log_that_cannot_be_ended_is_ended_later(overlay):
+    overlay.chord(T0 + 20)
+    overlay.overlay_fails = {False}
+    overlay.chord(T0 + 80)                                  # the recording is saved, but mangohudctl says no
+    assert overlay.statuses() == ["pending"] and overlay.service._overlay_on
+    overlay.service.tick(T0 + 85)
+    overlay.service.tick(T0 + 86)                           # inside the retry pause: no second try
+    assert overlay.overlay_calls == [True, False, False]
+    overlay.overlay_fails = set()
+    overlay.service.tick(T0 + 95)
+    assert overlay.overlay_calls == [True, False, False, False] and overlay.logging_now is False
+    overlay.service.tick(T0 + 120)
+    assert overlay.overlay_calls == [True, False, False, False]
+
+
+def test_a_game_closed_during_the_recording_saves_nothing_from_the_menu_frames(overlay):
+    overlay.chord(T0 + 20)
+    overlay.running = set()                                 # the game quit, Steam's menu is on screen (and in the log)
+    overlay.chord(T0 + 80)
+    assert overlay.statuses() == [] and overlay.sounds[-1] == "error" and "game was closed" in overlay.said[-1]
+    assert overlay.overlay_calls == [True, False] and overlay.service.session.phase.value == "idle"
+
+
+def test_a_long_look_at_steams_menu_spoils_the_minute(overlay):
+    overlay.chord(T0 + 20)
+    overlay.front = 769
+    overlay.service.tick(T0 + 30)
+    overlay.front = 1245620
+    overlay.service.tick(T0 + 45)                           # 15 s away from the game
+    overlay.chord(T0 + 80)
+    assert overlay.statuses() == [] and "not in front for 15 s" in overlay.said[-1] and overlay.overlay_calls == [True, False]
+
+
+def test_a_short_look_at_steams_menu_is_fine(overlay):
+    overlay.chord(T0 + 20)
+    overlay.front = 769
+    overlay.service.tick(T0 + 30)
+    overlay.front = 1245620
+    overlay.service.tick(T0 + 33)                           # 3 s: the Steam button was pressed and let go
+    overlay.chord(T0 + 80)
+    assert overlay.statuses() == ["pending"]
+
+
+def test_the_menu_still_in_front_when_the_minute_ends_counts(overlay):
+    overlay.chord(T0 + 20)
+    overlay.front = 769
+    overlay.service.tick(T0 + 70)
+    overlay.chord(T0 + 80)                                  # 10 s in the menu up to the end
+    assert overlay.statuses() == [] and "not in front for 10 s" in overlay.said[-1]
+
+
+def test_a_front_app_that_cannot_be_read_is_no_reason_to_lose_the_recording(overlay):
+    overlay.chord(T0 + 20)
+    overlay.front = None
+    for second in range(22, 80, 2):
+        overlay.service.tick(T0 + second)
+    overlay.chord(T0 + 80)
+    assert overlay.statuses() == ["pending"]
+
+
+def test_the_front_app_is_looked_at_every_two_seconds_not_every_tick(overlay):
+    calls = []
+    overlay.service._focused_app = lambda: calls.append(1) or 1245620
+    overlay.chord(T0 + 20)
+    first = len(calls)
+    for step in range(0, 40):
+        overlay.service.tick(T0 + 21 + step * 0.25)         # ten seconds in quarter-second ticks
+    assert 4 <= len(calls) - first <= 6
+
+
+def test_stopping_the_service_never_leaves_a_log_running(overlay):
+    overlay.chord(T0 + 20)
+    overlay.service.close()
+    assert overlay.overlay_calls == [True, False] and overlay.logging_now is False
+    overlay.service.close()
+    assert overlay.overlay_calls == [True, False]           # nothing to end any more
+
+
+def test_a_log_left_open_by_a_crashed_service_is_closed_at_the_next_start(overlay):
+    overlay.service.recover()
+    assert overlay.overlay_calls == [False]
+
+
+def test_a_log_nobody_records_for_is_ended_by_the_safety_net(overlay):
+    assert overlay.service._start_overlay_log() is True     # e.g. a start whose recording was dropped on the way
+    overlay.service.tick(T0 + 10)
+    assert overlay.overlay_calls == [True, False]
+
+
+def test_without_the_overlay_program_nothing_is_ever_started_on_command(tmp_path):
+    """Desktop Mode: MangoHud's layer inside the game logs all the time and the recording is cut out of that log."""
+    rig = Rig(tmp_path, cancel_window=10.0, record_seconds=0)
+    rig.service.recover()
+    seen = cut_sources(rig)
+    rig.chord(T0 + 20)
+    rig.chord(T0 + 80)
+    assert rig.overlay_calls == [] and seen == [rig.log] and rig.statuses() == ["pending"]
+
+
+def test_a_setup_without_an_overlay_folder_uses_the_games_own_log(tmp_path):
+    rig = Rig(tmp_path, cancel_window=10.0, record_seconds=0)
+    rig.overlay_running = True                              # the program runs, but this setup does not know a folder for it
+    seen = cut_sources(rig)
+    rig.chord(T0 + 20)
+    rig.chord(T0 + 80)
+    assert rig.overlay_calls == [] and seen == [rig.log]
+
+
+def test_a_game_without_any_log_explains_itself(tmp_path):
+    """Desktop Mode: an OpenGL game runs, but nothing writes data for it - say so, do not just beep."""
+    rig = Rig(tmp_path, cancel_window=10.0, record_seconds=0)
+    rig.newest = None
+    rig.chord(T0 + 20)
+    assert rig.sounds == ["error"] and rig.service.session.phase.value == "idle"
+    assert "no performance data for this game" in rig.said[-1] and "OpenGL" in rig.said[-1] and "Game Mode" in rig.said[-1]
+
+
+def test_no_game_and_no_log_still_says_start_a_game(tmp_path):
+    rig = Rig(tmp_path, cancel_window=10.0, record_seconds=0)
+    rig.newest = None
+    rig.running = set()
+    rig.chord(T0 + 20)
+    assert "no running game found - start a game first" in rig.said[-1]
+
+
+def test_old_overlay_logs_go_but_the_recording_in_progress_stays(overlay):
     import os
+    old = write_log(overlay.overlay_dir, seconds=1, name="mangoapp_2026-10-10_08-00-00.csv")
     os.utime(old, (T0 - 10 * 86400, T0 - 10 * 86400))
-    opengl.service._tidy_mangoapp_logs()
-    assert not old.exists() and opengl.mangoapp_log.exists()
+    overlay.chord(T0 + 20)
+    overlay.service.tick(T0 + 21)                           # the hourly housekeeping runs at the first tick
+    assert not old.exists() and overlay.overlay_files[0].exists()
 
+
+def test_the_recording_starts_with_the_first_frame_the_log_holds(overlay):
+    """The log begins at the chord: elapsed 0 is the moment of the press, so nothing may be skipped at the start or the end."""
+    real = overlay._overlay_log
+
+    def marked(on):
+        ok = real(on)
+        if on and overlay.overlay_files:
+            path = overlay.overlay_files[-1]
+            lines = path.read_text().splitlines(keepends=True)
+            first = next(i for i, line in enumerate(lines) if line.startswith("fps,")) + 1
+            lines[first] = "60,99.000,40.0,90.0,1280x800,0\n"             # a recognisable first frame
+            path.write_text("".join(lines))
+        return ok
+    overlay.service._overlay_log = marked
+    overlay.chord(T0 + 20)
+    overlay.chord(T0 + 80)
+    overlay.service.tick(T0 + 91)
+    frametimes = overlay.sent[0]["frametimes"]
+    assert frametimes[0] == pytest.approx(99.0) and 3590 <= len(frametimes) <= 3610

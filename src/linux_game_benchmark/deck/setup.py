@@ -1,4 +1,4 @@
-"""One-time setup on the Deck: MangoHud flight recorder, environment, systemd user service, sounds.
+"""One-time setup on the Deck: MangoHud (Desktop Mode flight recorder, Game Mode log on command), systemd user service, sounds.
 
 Everything is written below $HOME (SteamOS updates replace the system image, never /home) and
 every function is idempotent, so running the setup again repairs a broken install.
@@ -49,22 +49,19 @@ position=top-right
 {MARKER_END}
 """
 
-# Game Mode points MANGOHUD_CONFIGFILE at a file of its own (Steam's performance overlay, "no_display" by default), so
-# our config file is never read there. MANGOHUD_CONFIG (the same options as one variable) wins over that file.
+# Game Mode points MANGOHUD_CONFIGFILE at a file of its own (Steam's performance overlay), so our config file is never read
+# there and the MangoHud layer inside the games stays quiet. Game Mode is recorded through Steam's overlay program instead
+# (it sees every game): its drop-in below only says where the log goes - a log is written when the recorder asks for one.
 MANGOAPP_DROPIN = "gamescope-mangoapp.service.d/linuxgamebench.conf"
 MANGOAPP_UNIT = "gamescope-mangoapp.service"
 MANGOAPP_FALLBACK_COMMAND = "/usr/bin/mangoapp"
 
 
-def mangohud_env_options(out_dir: Optional[Path] = None) -> str:
-    out_dir = out_dir or deck_config.log_dir()
-    return ",".join([f"output_folder={out_dir}", "autostart_log=1", "log_interval=0", *SENSORS])
-
-
 def mangoapp_env_options(out_dir: Optional[Path] = None) -> str:
-    """Only the logging switches - no sensor list, so what Steam's overlay shows stays as the player set it."""
+    """Where the log goes and one row per frame. No `autostart_log` (the recorder starts a log with `mangohudctl set log_session`)
+    and no sensor list, so what Steam's overlay shows stays as the player set it."""
     out_dir = out_dir or deck_config.mangoapp_log_dir()
-    return ",".join([f"output_folder={out_dir}", "autostart_log=1", "log_interval=0"])
+    return ",".join([f"output_folder={out_dir}", "log_interval=0"])
 
 
 def home() -> Path:
@@ -103,13 +100,13 @@ def write_mangohud_conf(path: Optional[Path] = None, out_dir: Optional[Path] = N
 
 
 def write_env_file(path: Optional[Path] = None, conf: Optional[Path] = None) -> Path:
-    """MANGOHUD=1 for everything the user session starts (read at the next login, e.g. switching to Game Mode)."""
+    """MANGOHUD=1 and our config for everything the user session starts (read at the next login). Desktop Mode only: Game Mode
+    brings its own config file, and the layer in a game logs nothing there (Steam's overlay program records instead)."""
     path = path or env_file_path()
     conf = conf or mangohud_conf_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("# Written by Linux Game Bench\nMANGOHUD=1\n"
-                    f"MANGOHUD_CONFIGFILE={conf}\n"
-                    f"MANGOHUD_CONFIG={mangohud_env_options()}\n")
+                    f"MANGOHUD_CONFIGFILE={conf}\n")
     write_mangoapp_dropin()
     return path
 
@@ -142,17 +139,17 @@ def _unit_quote(text: str) -> str:
 
 
 def write_mangoapp_dropin() -> Path:
-    """Steam's own performance overlay (mangoapp) writes the log of every game in Game Mode.
+    """Steam's own performance overlay (mangoapp) writes the log of every game in Game Mode - on command.
 
     MangoHud's Vulkan layer cannot see OpenGL games (Brotato, Godot, many native titles), but Gamescope hands the frame data
-    of EVERY game to mangoapp. So mangoapp gets its own logging variable (the plain session value never reaches it, that is
-    what UnsetEnvironment is for); what it shows on screen stays exactly as the player set it in Steam."""
+    of EVERY game to mangoapp. So mangoapp gets its own variable with the folder for the logs (the plain session value never
+    reaches it, that is what UnsetEnvironment is for); what it shows on screen stays exactly as the player set it in Steam."""
     path = mangoapp_dropin_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     deck_config.mangoapp_log_dir().mkdir(parents=True, exist_ok=True)
     command = vendor_mangoapp_command()
     path.write_text(
-        "# Written by Linux Game Bench: this overlay program logs every game (also OpenGL) for the recorder; the overlay looks the same\n"
+        "# Written by Linux Game Bench: the recorder tells this overlay program to log a game (also OpenGL) while it records; the overlay looks the same\n"
         "[Service]\n"
         "UnsetEnvironment=MANGOHUD_CONFIG\n"
         "ExecStart=\n"

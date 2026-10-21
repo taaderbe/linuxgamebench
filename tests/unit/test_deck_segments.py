@@ -82,3 +82,39 @@ def test_last_elapsed_reads_only_complete_rows(tmp_path):
         fh.write("60,16.6,40.0")                 # half-written row: no elapsed yet
     assert last_elapsed_ns(src) == pytest.approx(10e9, abs=2e7)
     assert last_elapsed_ns(tmp_path / "missing.csv") is None
+
+
+# ----- a log that was ended on command ------------------------------------------------------------------------------------
+
+def test_a_log_is_closed_when_its_summary_file_appears(tmp_path):
+    from linux_game_benchmark.deck.segments import wait_until_closed
+    path = make_log(tmp_path, seconds=2, name="mangoapp_2026-10-21_12-00-00.csv")
+    (tmp_path / "mangoapp_2026-10-21_12-00-00_summary.csv").write_text("fps\n")
+    assert wait_until_closed(path, timeout=1.0, poll=0.01) is True
+
+
+def test_a_log_that_stops_growing_counts_as_closed_without_a_summary(tmp_path):
+    from linux_game_benchmark.deck.segments import wait_until_closed
+    path = make_log(tmp_path, seconds=2, name="mangoapp_2026-10-21_12-00-00.csv")
+    assert wait_until_closed(path, timeout=1.0, poll=0.01) is True
+
+
+def test_a_log_that_keeps_growing_is_not_closed_and_a_missing_one_cannot_be(tmp_path):
+    from linux_game_benchmark.deck.segments import wait_until_closed
+    path = make_log(tmp_path, seconds=2, name="mangoapp_2026-10-21_12-00-00.csv")
+    import threading, time
+    stop = threading.Event()
+
+    def grow():
+        while not stop.is_set():
+            with open(path, "a") as fh:
+                fh.write("60,16.7,40.0,90.0,0\n")
+            time.sleep(0.005)
+    thread = threading.Thread(target=grow)
+    thread.start()
+    try:
+        assert wait_until_closed(path, timeout=0.3, poll=0.02) is False
+    finally:
+        stop.set()
+        thread.join()
+    assert wait_until_closed(tmp_path / "nowhere.csv", timeout=0.2, poll=0.01) is False

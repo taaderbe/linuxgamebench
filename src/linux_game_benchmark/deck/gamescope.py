@@ -131,6 +131,15 @@ def game_display(pid: Optional[int], root: str = "/") -> Optional[str]:
     return None
 
 
+def focused_app(run: Runner = run_tool, displays: Callable[[], Iterable[str]] = x_displays) -> Optional[int]:
+    """The app id Gamescope shows in front (769 = Steam's own interface, menus and notifications). None when it cannot be read."""
+    for display in displays():
+        props = parse_props(run(["xprop", "-display", display, "-root", "GAMESCOPE_FOCUSED_APP"]))
+        if "GAMESCOPE_FOCUSED_APP" in props:
+            return props["GAMESCOPE_FOCUSED_APP"]
+    return None
+
+
 def probe(pid: Optional[int], app_id: Optional[int], run: Runner = run_tool,
           displays: Callable[[], Iterable[str]] = x_displays, display_of: Callable[[Optional[int]], Optional[str]] = game_display) -> dict:
     """One look at the running game. Keys (only those that were read): render_mode "1280x720", fps_limit, scaling_filter,

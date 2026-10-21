@@ -209,8 +209,12 @@ def run() -> None:
         status_file=deck_config.data_dir() / "status.json",
     )
     print(f"Linux Game Bench Deck recorder - chord {cfg.chord}, auto-upload {'on' if cfg.auto_upload else 'off'}", flush=True)
-    run_forever(service, reader, stop=lambda: stopping["flag"])
-    reader.close()
+    service.recover()                                   # a log a crashed predecessor left running would show its red dot for ever
+    try:
+        run_forever(service, reader, stop=lambda: stopping["flag"])
+    finally:
+        service.close()                                 # never leave Steam's overlay program logging
+        reader.close()
 
 
 @deck_app.command()
@@ -236,7 +240,9 @@ def status() -> None:
     conf_ok = deck_setup.is_managed(deck_setup.mangohud_conf_path())
     console.print(f"MangoHud:    {'configured' if conf_ok else 'not configured (lgb deck setup)'}")
     overlay_ok = deck_setup.mangoapp_dropin_path().exists()
-    console.print(f"Game Mode:   {'all games are logged (also OpenGL)' if overlay_ok else 'only Vulkan / Proton games are logged (lgb deck setup)'}")
+    game_mode = ("every game is recorded (OpenGL, Vulkan, Proton); with Steam's performance overlay on, a red dot shows meanwhile"
+                 if overlay_ok else "not set up (lgb deck setup)")
+    console.print(f"Game Mode:   {game_mode}")
     items = Queue(deck_config.queue_dir()).items()
     console.print(f"Recordings:  {len(items)}  (" + ", ".join(
         f"{n} {s}" for s, n in sorted({s: sum(1 for i in items if i.status == s) for s in {i.status for i in items}}.items())) + ")")

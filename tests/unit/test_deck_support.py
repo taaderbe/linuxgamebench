@@ -265,24 +265,22 @@ def test_enabling_the_service_also_restarts_it_so_an_update_takes_effect(fake_ho
     assert ok and ("daemon-reload",) in calls and calls.index(("restart", deck_setup.UNIT_NAME)) > calls.index(("enable", "--now", deck_setup.UNIT_NAME))
 
 
-# ----- Game Mode: Steam owns MANGOHUD_CONFIGFILE there, so the options also go in MANGOHUD_CONFIG -------------------
+# ----- Game Mode: Steam owns MANGOHUD_CONFIGFILE there, the games' MangoHud layer stays quiet -----------------------
 
 def env_lines(path):
     return dict(line.split("=", 1) for line in path.read_text().splitlines() if "=" in line and not line.startswith("#"))
 
 
-def test_environment_file_carries_the_logging_options_as_one_variable(fake_home):
+def test_environment_file_only_points_the_desktop_mode_layer_at_our_config(fake_home):
     env = env_lines(deck_setup.write_env_file())
-    options = env["MANGOHUD_CONFIG"].split(",")
-    assert options[0].startswith("output_folder=") and "autostart_log=1" in options and "log_interval=0" in options
-    assert set(deck_setup.SENSORS) <= set(options)
-    assert "no_display" not in options and not any(o.startswith(("alpha", "font_size")) for o in options), \
-        "the overlay look must not travel to Steam's own performance overlay"
+    assert env["MANGOHUD"] == "1" and env["MANGOHUD_CONFIGFILE"] == str(deck_setup.mangohud_conf_path())
+    assert "MANGOHUD_CONFIG" not in env, \
+        "a logging variable for every game would make the layer inside the games log all the time in Game Mode, too"
 
 
-def test_config_file_and_variable_list_the_same_sensors():
-    in_file = {l.strip() for l in deck_setup.MANGOHUD_CONF_TEMPLATE.splitlines()}
-    assert set(deck_setup.SENSORS) <= in_file
+def test_the_desktop_mode_config_still_logs_all_the_time_with_every_sensor():
+    text = deck_setup.MANGOHUD_CONF_TEMPLATE
+    assert "autostart_log=1" in text and set(deck_setup.SENSORS) <= {l.strip() for l in text.splitlines()}
 
 
 def test_steams_performance_overlay_does_not_get_the_variable(fake_home):
@@ -329,14 +327,15 @@ ExecStart=/usr/bin/env "MANGOHUD_CONFIG=x" /usr/bin/old-copy-of-ours
 """
 
 
-def test_the_overlay_program_logs_with_its_own_variable_and_only_the_logging_switches(fake_home, tmp_path, monkeypatch):
+def test_the_overlay_program_gets_its_own_variable_with_only_the_log_folder_and_rate(fake_home, tmp_path, monkeypatch):
     monkeypatch.setattr(deck_setup, "_systemctl", FakeSystemctl())
     path = deck_setup.write_mangoapp_dropin()
     lines = path.read_text().splitlines()
     out = tmp_path / "data/deck/mangoapp-logs"
     assert "UnsetEnvironment=MANGOHUD_CONFIG" in lines                       # the long session value still never reaches it
     assert lines.index("ExecStart=") < lines.index(
-        f'ExecStart=/usr/bin/env "MANGOHUD_CONFIG=output_folder={out},autostart_log=1,log_interval=0" /usr/bin/mangoapp')
+        f'ExecStart=/usr/bin/env "MANGOHUD_CONFIG=output_folder={out},log_interval=0" /usr/bin/mangoapp')
+    assert "autostart_log" not in path.read_text(), "a log is written when the recorder asks for one, never on its own"
     assert out.is_dir()
     assert not set(deck_setup.SENSORS) & set(deck_setup.mangoapp_env_options().split(",")), \
         "a sensor list would show up on Steam's overlay"

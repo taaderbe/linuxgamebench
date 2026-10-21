@@ -39,6 +39,33 @@ def newest_log(log_dir: Path, max_age: float = 60.0, now: Optional[float] = None
     return best[1] if best else None
 
 
+def log_names(log_dir: Path) -> set[str]:
+    """The log files that exist right now - taken before a log is started on command, to tell the new one apart."""
+    try:
+        return {p.name for p in Path(log_dir).glob("*.csv")}
+    except OSError:
+        return set()
+
+
+def new_log(log_dir: Path, before: set[str]) -> Optional[Path]:
+    """The log file that appeared after `before` was taken (the newest one; a _summary never counts)."""
+    best: Optional[tuple[float, Path]] = None
+    try:
+        candidates = list(Path(log_dir).glob("*.csv"))
+    except OSError:
+        return None
+    for path in candidates:
+        if path.name in before or path.name.endswith("_summary.csv"):
+            continue
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        if best is None or mtime > best[0]:
+            best = (mtime, path)
+    return best[1] if best else None
+
+
 def _pids(proc: Path) -> list[Path]:
     try:
         return [p for p in proc.iterdir() if p.name.isdigit()]
@@ -85,6 +112,33 @@ def log_writer(csv_path: Path, proc: Path = Path("/proc")) -> Optional[tuple[int
             except OSError:
                 continue
     return None
+
+
+def _rss_kb(pid_dir: Path) -> int:
+    try:
+        for line in (pid_dir / "status").read_text(errors="replace").splitlines():
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return 0
+
+
+def game_pid(app_id: int, proc: Path = Path("/proc")) -> Optional[int]:
+    """The game's own process: of everything Steam started for this app (reaper, runtime, wine servers, the game) the one that
+    uses the most memory. Its environment holds the launch options and the DISPLAY the game draws on."""
+    best: Optional[tuple[int, int]] = None
+    for pid_dir in _pids(proc):
+        if app_id_from_environ(pid_dir) != app_id:
+            continue
+        rss = _rss_kb(pid_dir)
+        if best is None or rss > best[0]:
+            best = (rss, int(pid_dir.name))
+    return best[1] if best else None
+
+
+def describe(app_id: int) -> "GameInfo":
+    return GameInfo(app_id=app_id, name=game_name(app_id), pid=game_pid(app_id))
 
 
 def running_steam_games(proc: Path = Path("/proc")) -> set[int]:
