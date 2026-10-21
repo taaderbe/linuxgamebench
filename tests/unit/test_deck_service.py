@@ -45,6 +45,9 @@ class Rig:
         self.overlay_fails: set = set()               # {True} / {False}: mangohudctl answers "no" to that command
         self.overlay_writes = True                    # the overlay program really opens a log file when told to
         self.overlay_files: list = []
+        self.display_calls: list = []                 # what the service told the overlay about showing: False = hide, True = Steam's setting again
+        self.display_fails: set = set()
+        self.events: list = []                        # ("log"|"display", value) in the order the service did it
         self.logging_now = False
         self.front = None                             # what Gamescope shows in front: None = cannot be read, 769 = Steam's menu
         self.running = {1245620}                      # app ids Steam is running right now
@@ -64,7 +67,8 @@ class Rig:
             newest_log=lambda d: self.newest,
             identify=lambda p: self.game,
             mangoapp_log_dir=self.overlay_dir, running_games=lambda: set(self.running),
-            overlay_running=lambda: self.overlay_running, overlay_log=self._overlay_log, focused_app=lambda: self.front,
+            overlay_running=lambda: self.overlay_running, overlay_log=self._overlay_log, overlay_display=self._overlay_display,
+            focused_app=lambda: self.front,
             describe=lambda app_id: self.game if self.game and self.game.app_id == app_id else GameInfo(app_id, f"App {app_id}"),
             wait_closed=self._wait_closed, overlay_wait=0.2,
             wait_flushed=lambda *a, **k: True,
@@ -76,9 +80,16 @@ class Rig:
             read_display=self._read_display,
         )
 
+    def _overlay_display(self, show):
+        """mangohudctl set no_display true (hide) / reload_config true (Steam's own setting again)."""
+        self.display_calls.append(show)
+        self.events.append(("display", show))
+        return show not in self.display_fails
+
     def _overlay_log(self, on):
         """mangohudctl set log_session true|false: a new file per start, nothing in between."""
         self.overlay_calls.append(on)
+        self.events.append(("log", on))
         if on in self.overlay_fails:
             return False
         if on and self.overlay_writes and not self.logging_now:
@@ -573,6 +584,124 @@ def test_a_log_that_cannot_be_ended_is_ended_later(overlay):
     assert overlay.overlay_calls == [True, False, False, False] and overlay.logging_now is False
     overlay.service.tick(T0 + 120)
     assert overlay.overlay_calls == [True, False, False, False]
+
+
+# ----- the "Logging Finished" summary MangoHud draws for 12 s after a log: hidden, then Steam's own setting again -----------
+
+def test_the_summary_after_the_log_is_hidden_and_the_overlay_comes_back(overlay):
+    overlay.chord(T0 + 20)
+    overlay.service.tick(T0 + 50)
+    assert overlay.display_calls == []                      # nothing is hidden while a log runs: the red dot has to show
+    overlay.chord(T0 + 80)
+    assert overlay.display_calls == [False]                 # hidden in the moment the log ends
+    overlay.service.tick(T0 + 85)
+    overlay.service.tick(T0 + 92)                           # MangoHud's 12 s are not over yet
+    assert overlay.display_calls == [False]
+    overlay.service.tick(T0 + 93)
+    assert overlay.display_calls == [False, True]
+    overlay.service.tick(T0 + 200)
+    assert overlay.display_calls == [False, True]           # once, not again and again
+
+
+def test_the_time_limit_hides_the_summary_too(tmp_path):
+    rig = Rig(tmp_path, overlay=True)                       # defaults: 60 s, upload right away
+    rig.chord(T0 + 20)
+    rig.service.tick(T0 + 80.4)
+    assert rig.display_calls == [False]
+    rig.service.tick(T0 + 94)
+    assert rig.display_calls == [False, True]
+
+
+def test_a_recording_spoiled_by_steams_menu_hides_the_summary_as_well(overlay):
+    overlay.chord(T0 + 20)
+    overlay.front = 769
+    overlay.service.tick(T0 + 30)
+    overlay.front = 1245620
+    overlay.service.tick(T0 + 45)
+    overlay.chord(T0 + 80)
+    assert overlay.statuses() == [] and overlay.display_calls == [False]    # nothing saved, but the log did end
+    overlay.service.tick(T0 + 94)
+    assert overlay.display_calls == [False, True]
+
+
+def test_a_start_that_was_refused_hides_nothing(overlay):
+    overlay.front = 769
+    overlay.chord(T0 + 20)
+    assert overlay.overlay_calls == [] and overlay.display_calls == []
+
+
+def test_a_new_recording_during_the_summary_gets_the_overlay_back_before_the_log_starts(overlay):
+    overlay.chord(T0 + 20)
+    overlay.chord(T0 + 80)
+    assert overlay.display_calls == [False]
+    overlay.events.clear()
+    overlay.service.tick(T0 + 91)                           # the cancel window is over (the upload goes), MangoHud's 12 s are not
+    assert overlay.display_calls == [False]
+    overlay.chord(T0 + 92)                                  # a new recording while the old summary is still hidden
+    assert overlay.service.session.phase.value == "recording"
+    assert overlay.events[:2] == [("display", True), ("log", True)], overlay.events
+
+
+def test_the_overlay_is_hidden_only_when_the_log_has_really_ended(overlay):
+    overlay.chord(T0 + 20)
+    overlay.overlay_fails = {False}
+    overlay.chord(T0 + 80)                                  # mangohudctl cannot end the log: no summary is coming yet
+    assert overlay.display_calls == []
+    overlay.overlay_fails = set()
+    overlay.service.tick(T0 + 95)                           # the safety net ends it
+    assert overlay.display_calls == [False]
+
+
+def test_a_hide_that_failed_is_not_undone(overlay):
+    overlay.display_fails = {False}
+    overlay.chord(T0 + 20)
+    overlay.chord(T0 + 80)
+    overlay.service.tick(T0 + 200)
+    assert overlay.display_calls == [False]                 # nothing was hidden, so nothing is given back
+
+
+def test_a_show_that_failed_is_tried_again_later(overlay):
+    overlay.chord(T0 + 20)
+    overlay.chord(T0 + 80)
+    overlay.display_fails = {True}
+    overlay.service.tick(T0 + 93)
+    overlay.service.tick(T0 + 94)                           # inside the retry pause: no second try
+    assert overlay.display_calls == [False, True]
+    overlay.display_fails = set()
+    overlay.service.tick(T0 + 99)
+    assert overlay.display_calls == [False, True, True]
+    overlay.service.tick(T0 + 130)
+    assert overlay.display_calls == [False, True, True]
+
+
+def test_stopping_the_service_never_leaves_the_overlay_hidden(overlay):
+    overlay.chord(T0 + 20)
+    overlay.chord(T0 + 80)
+    overlay.service.close()
+    assert overlay.display_calls == [False, True]
+    overlay.service.close()
+    assert overlay.display_calls == [False, True]
+
+
+def test_stopping_the_service_during_a_recording_ends_the_log_and_shows_the_overlay(overlay):
+    overlay.chord(T0 + 20)
+    overlay.service.close()
+    assert overlay.overlay_calls == [True, False] and overlay.display_calls == [False, True]
+
+
+def test_the_start_of_the_service_gives_a_hidden_overlay_back(overlay):
+    overlay.service.recover()                               # a service killed during the summary left the overlay hidden
+    assert overlay.display_calls == [True]
+
+
+def test_desktop_mode_never_touches_the_overlay(tmp_path):
+    rig = Rig(tmp_path, cancel_window=10.0, record_seconds=0)
+    rig.service.recover()
+    rig.chord(T0 + 20)
+    rig.chord(T0 + 80)
+    rig.service.tick(T0 + 200)
+    rig.service.close()
+    assert rig.display_calls == []
 
 
 def test_a_game_closed_during_the_recording_saves_nothing_from_the_menu_frames(overlay):

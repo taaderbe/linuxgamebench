@@ -2,7 +2,8 @@
 
 `mangohudctl set log_session true|false` starts and ends one log file, so one recording is exactly one file and nothing is
 logged in between. While a log runs MangoHud draws a red dot in its overlay (visible when the player has Steam's performance
-overlay switched on). mangohudctl talks to mangoapp only, never to the MangoHud layer inside a game.
+overlay switched on); when the log ends it shows a "Logging Finished" summary for 12 seconds, squeezed into the overlay's
+narrow box at Steam's level 1. mangohudctl talks to mangoapp only, never to the MangoHud layer inside a game.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from linux_game_benchmark.deck.gamescope import host_env
 
 PROGRAM = "mangoapp"
 CONTROL = "mangohudctl"
+SUMMARY_SECONDS = 12.0          # how long MangoHud shows the summary after a log ended (a fixed 12 s in its overlay code)
 
 
 def running(proc: Path = Path("/proc")) -> bool:
@@ -69,6 +71,22 @@ def set_logging(on: bool, run: Callable = subprocess.run, which: Callable = shut
         return False
     try:
         done = run([exe, "set", "log_session", "true" if on else "false"], capture_output=True, timeout=5, env=host_env())
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return done.returncode == 0
+
+
+def set_display(show: bool, run: Callable = subprocess.run, which: Callable = shutil.which) -> bool:
+    """Hide the overlay (show=False) or give it back to what the player chose in Steam (show=True).
+
+    Showing is done by re-reading Steam's own overlay file, not by `no_display false`: that would also switch the overlay on
+    for a player who chose "off". True when mangohudctl accepted the command."""
+    exe = which(CONTROL)
+    if not exe:
+        return False
+    args = ["set", "reload_config", "true"] if show else ["set", "no_display", "true"]
+    try:
+        done = run([exe, *args], capture_output=True, timeout=5, env=host_env())
     except (OSError, subprocess.SubprocessError):
         return False
     return done.returncode == 0

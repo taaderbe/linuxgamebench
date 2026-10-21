@@ -42,6 +42,7 @@ FOCUS_POLL_INTERVAL = 2.0                # seconds between looks at what is in f
 FOCUS_LOSS_LIMIT = 5.0                   # the overlay program logs what is in front: more than this away from the game spoils the minute
 LOG_WAIT_SECONDS = 3.0                   # how long the overlay program may take to open the log file it was told to start
 STOP_RETRY_SECONDS = 5.0                 # a log that could not be ended is ended again this often
+SUMMARY_HIDE_SECONDS = deck_mangoapp.SUMMARY_SECONDS + 0.8   # the overlay stays hidden while MangoHud's end-of-log summary would show
 
 
 @dataclass
@@ -86,6 +87,7 @@ class DeckService:
         running_games: Callable[[], set] = deck_game.running_steam_games,
         overlay_running: Callable[[], bool] = deck_mangoapp.running,
         overlay_log: Callable[[bool], bool] = deck_mangoapp.set_logging,
+        overlay_display: Callable[[bool], bool] = deck_mangoapp.set_display,
         focused_app: Callable[[], Optional[int]] = gamescope.focused_app,
         describe: Callable[[int], deck_game.GameInfo] = deck_game.describe,
         wait_closed: Callable[..., bool] = segments.wait_until_closed,
@@ -102,6 +104,10 @@ class DeckService:
         self._focused_app, self._describe, self._wait_closed, self._overlay_wait = focused_app, describe, wait_closed, overlay_wait
         self._overlay_on = False                 # the overlay program is logging because this service told it to
         self._overlay_stop_try = 0.0
+        self._overlay_display = overlay_display
+        self._summary_hidden = False             # the overlay is hidden while MangoHud shows its end-of-log summary
+        self._summary_hidden_at: Optional[float] = None
+        self._summary_show_try = 0.0
         self.work_dir = work_dir
         self.play, self.say = play, say
         self._newest_log, self._identify, self._cut = newest_log, identify, cut
@@ -208,7 +214,7 @@ class DeckService:
             return
         log = self._wait_for_new_log(before)
         if log is None:
-            self._stop_overlay_log()
+            self._stop_overlay_log(now)
             self._refuse("Steam's overlay program did not start a log - run 'lgb deck setup' once and try again")
             return
         self._active = Active(log, now, game, self._start_sampler(now), looks=[], on_demand=True, last_focus=now)
@@ -233,6 +239,7 @@ class DeckService:
     # ----- the overlay program's log, started and ended on command -----------------------------------------------------
 
     def _start_overlay_log(self) -> bool:
+        self._show_overlay()                     # a new recording while the last summary was still hidden: the dot must show
         try:
             ok = bool(self._overlay_log(True))
         except Exception:
@@ -241,7 +248,7 @@ class DeckService:
             self._overlay_on = True
         return ok
 
-    def _stop_overlay_log(self) -> bool:
+    def _stop_overlay_log(self, now: Optional[float] = None) -> bool:
         """End the log the service started. A log that cannot be ended stays marked, so the loop tries again."""
         if not self._overlay_on:
             return True
@@ -251,6 +258,31 @@ class DeckService:
             ok = False
         if ok:
             self._overlay_on = False
+            self._hide_summary(now)
+        return ok
+
+    # MangoHud answers the end of a log with a "Logging Finished" window for 12 s. It sits in the overlay's own box, which is
+    # only as wide as the FPS number at Steam's level 1, so it comes out squeezed and cut off. There is no setting for it:
+    # hide the overlay for those seconds and then let MangoHud re-read Steam's file (what the player chose stays what it was).
+
+    def _hide_summary(self, now: Optional[float]) -> None:
+        try:
+            ok = bool(self._overlay_display(False))
+        except Exception:
+            ok = False
+        if ok:
+            self._summary_hidden, self._summary_hidden_at = True, now
+
+    def _show_overlay(self) -> bool:
+        """Give the overlay back to Steam's setting. A failed attempt stays marked, so the loop tries again."""
+        if not self._summary_hidden:
+            return True
+        try:
+            ok = bool(self._overlay_display(True))
+        except Exception:
+            ok = False
+        if ok:
+            self._summary_hidden, self._summary_hidden_at = False, None
         return ok
 
     def _wait_for_new_log(self, before: set) -> Optional[Path]:
@@ -320,11 +352,16 @@ class DeckService:
                 self._overlay_log(False)
             except Exception:
                 pass
+            try:
+                self._overlay_display(True)      # a run that was killed during the summary left the overlay hidden
+            except Exception:
+                pass
             self._sweep_intake()
 
     def close(self) -> None:
-        """At service stop: never leave a log running."""
+        """At service stop: never leave a log running, never leave the overlay hidden."""
         self._stop_overlay_log()
+        self._show_overlay()
 
     def _look(self, active: "Active", now: float) -> None:
         """Ask Gamescope what the game renders at and which limits Steam applied (a bonus: never a reason to lose a recording)."""
@@ -373,7 +410,7 @@ class DeckService:
             self._stop_overlay_log()
             return
         if active.on_demand:
-            self._stop_overlay_log()             # ends the log file: from here on nothing more is written to it
+            self._stop_overlay_log(now)          # ends the log file: from here on nothing more is written to it
             self._wait_closed(active.log)
             active.log = self._archive_log(active.log)
             problem = self._overlay_problem(active, now)
@@ -450,7 +487,13 @@ class DeckService:
         if self._overlay_on and (self._active is None or self.session.phase.value != "recording") \
                 and now - self._overlay_stop_try >= STOP_RETRY_SECONDS:
             self._overlay_stop_try = now                         # nothing is recording any more, yet the log runs: end it
-            self._stop_overlay_log()
+            self._stop_overlay_log(now)
+        if self._summary_hidden:
+            if self._summary_hidden_at is None:
+                self._summary_hidden_at = now
+            if now - self._summary_hidden_at >= SUMMARY_HIDE_SECONDS and now - self._summary_show_try >= STOP_RETRY_SECONDS:
+                self._summary_show_try = now
+                self._show_overlay()                             # the summary is over: back to what the player chose in Steam
         self._write_status(now)
 
     def upload_item(self, item: deck_queue.Item, now: Optional[float] = None) -> bool:
