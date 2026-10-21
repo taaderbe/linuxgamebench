@@ -100,7 +100,7 @@ def test_setup_state_is_spelled_out(app, monkeypatch, configured, service, expec
 
 def test_not_linked_says_that_uploads_are_anonymous(app, monkeypatch):
     text = labels(make_view(monkeypatch, DeckOverview(is_deck=True, model="LCD")))
-    assert "Not linked - recordings upload anonymously" in text and "Nothing recorded yet." in text
+    assert "No account - recordings upload anonymously" in text and "Nothing recorded yet." in text
 
 
 def test_main_window_still_finds_the_detector():

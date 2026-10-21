@@ -118,6 +118,40 @@ def write_mangoapp_dropin() -> Path:
     return path
 
 
+LAUNCHER_NAME = "linuxgamebench-link.desktop"
+
+
+def link_launcher_path() -> Path:
+    return home() / ".local/share/applications" / LAUNCHER_NAME
+
+
+def app_command() -> str:
+    """The program as a person types it: the AppImage when we run from one, else `lgb`."""
+    return os.environ.get("APPIMAGE") or shutil.which("lgb") or sys.argv[0]
+
+
+def _desktop_quote(text: str) -> str:
+    """One argument of a .desktop Exec line (reserved characters escaped, whole thing in double quotes)."""
+    return '"' + "".join("\\" + c if c in '"`$\\' else c for c in text.replace("%", "%%")) + '"'
+
+
+def write_link_launcher(command: Optional[str] = None) -> Path:
+    """An entry in the application menu (Desktop Mode) that starts the account link - so linking later is one click."""
+    path = link_launcher_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=Linux Game Bench - link account\n"
+        "Comment=Connect this Steam Deck to your Linux Game Bench account (optional)\n"
+        f"Exec={_desktop_quote(command or app_command())} deck link --pause\n"
+        "Terminal=true\n"
+        "Icon=applications-games\n"
+        "Categories=Game;Utility;\n"
+    )
+    return path
+
+
 def service_command() -> str:
     """How systemd starts the service: the AppImage when we run from one, else the lgb script."""
     appimage = os.environ.get("APPIMAGE")
@@ -188,7 +222,7 @@ def remove_all() -> list[str]:
         _systemctl("disable", "--now", UNIT_NAME)
     except (OSError, subprocess.SubprocessError):
         pass
-    for path in (unit_path(), env_file_path(), mangoapp_dropin_path()):
+    for path in (unit_path(), env_file_path(), mangoapp_dropin_path(), link_launcher_path()):
         if path.exists():
             path.unlink()
             done.append(str(path))

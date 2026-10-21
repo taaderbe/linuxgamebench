@@ -19,6 +19,10 @@ class PairingError(Exception):
     pass
 
 
+class PairingSkipped(PairingError):
+    """The person chose to go on without an account."""
+
+
 def start(base_url: Optional[str] = None, label: str = "Steam Deck", timeout: float = 15.0) -> dict:
     base_url = base_url or settings.API_BASE_URL
     try:
@@ -55,14 +59,21 @@ def poll(device_code: str, base_url: Optional[str] = None, timeout: float = 15.0
 
 def pair(show: Callable[[dict], None], base_url: Optional[str] = None, label: str = "Steam Deck",
          sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
-         save: bool = True) -> AuthSession:
-    """Run the whole flow; `show` gets the start answer (code + link) once. Returns the saved session."""
+         save: bool = True, interrupt: Optional[Callable[[float], bool]] = None) -> AuthSession:
+    """Run the whole flow; `show` gets the start answer (code + link) once. Returns the saved session.
+
+    `interrupt(seconds)` replaces the sleep between two polls: it returns True when the person wants to stop
+    (Enter pressed) and the flow ends with PairingSkipped - the code simply expires on the server."""
     info = start(base_url, label)
     show(info)
     interval = max(1.0, float(info.get("interval", 3)))
     deadline = clock() + float(info["expires_in"])
     while clock() < deadline:
-        sleep(interval)
+        if interrupt is not None:
+            if interrupt(interval):
+                raise PairingSkipped("continued without an account")
+        else:
+            sleep(interval)
         answer = poll(info["device_code"], base_url)
         if answer.get("status") == "approved":
             session = AuthSession(

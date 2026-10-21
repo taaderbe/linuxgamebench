@@ -26,7 +26,9 @@ console = Console()
 @deck_app.command()
 def setup(
     yes: bool = typer.Option(False, "--yes", "-y", help="No questions: auto-upload on, pair if needed"),
-    no_pair: bool = typer.Option(False, "--no-pair", help="Do not link the account now"),
+    anonymous: bool = typer.Option(False, "--anonymous", envvar="LGB_ANON",
+                                   help="No account: recordings upload anonymously (link one any time with: deck link)"),
+    no_pair: bool = typer.Option(False, "--no-pair", hidden=True, help="Same as --anonymous"),
     force: bool = typer.Option(False, "--force", help="Set up even if this is not a Steam Deck"),
     seconds: Optional[int] = typer.Option(None, "--seconds", help="Length of one recording in seconds (30-300, default 60)"),
 ) -> None:
@@ -49,16 +51,22 @@ def setup(
     deck_setup.write_mangohud_conf()
     deck_setup.write_env_file()
     deck_setup.ensure_sounds()
+    deck_setup.write_link_launcher()
     ok, message = deck_setup.install_service()
     console.print(f"{'[green]✓[/green]' if ok else '[red]✗[/red]'} background service: {message}")
 
     from linux_game_benchmark.api.auth import is_logged_in
     if is_logged_in():
         console.print("[green]✓[/green] account already linked")
-    elif not no_pair and (yes or typer.confirm("Link your Linux Game Bench account now? (no password needed)", default=True)):
-        _pair()
+    elif anonymous or no_pair:
+        console.print("[green]✓[/green] no account: recordings upload anonymously")
+        _link_later_hint()
+    elif yes or typer.confirm("Link your Linux Game Bench account now? (optional, no password needed)", default=True):
+        if _pair(allow_skip=True) != "linked":
+            _link_later_hint()
     else:
-        console.print("[yellow]![/yellow] not linked: recordings are uploaded anonymously. Link later with: lgb deck pair")
+        console.print("[green]✓[/green] no account: recordings upload anonymously")
+        _link_later_hint()
 
     console.print(f"\nRecord with: hold [bold]{cfg.chord.split('>')[0].replace('+', ' + ')}[/bold], "
                   f"then press [bold]{cfg.chord.split('>')[1]}[/bold]. It records {cfg.record_seconds:.0f} s, "
@@ -66,8 +74,20 @@ def setup(
     console.print("[bold]Now switch back to Game Mode - that is all.[/bold]")
 
 
-def _pair() -> bool:
+def _link_later_hint() -> None:
+    console.print("  An account is optional. To link one any time:")
+    console.print(f"    [bold]{deck_setup.app_command()} deck link[/bold]")
+    console.print('    or open "Linux Game Bench - link account" in the application menu (Desktop Mode),')
+    console.print("    or use the Steam Deck tab of the app.")
+
+
+def _pair(allow_skip: bool = False) -> str:
+    """Run the account link. Returns "linked", "skipped" (Enter pressed) or "failed"."""
     from linux_game_benchmark.deck import pairing
+    from linux_game_benchmark.deck.ttyinput import EnterWatcher
+
+    watcher = EnterWatcher() if allow_skip else None
+    can_skip = watcher is not None and watcher.available
 
     def show(info: dict) -> None:
         console.print(f"\nOn your phone or PC open  [bold cyan]{info['verification_url']}[/bold cyan]")
@@ -75,21 +95,64 @@ def _pair() -> bool:
         complete = info.get("verification_url_complete")
         if complete and (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
             webbrowser.open(complete or info["verification_url"])
-        console.print("[dim]Waiting for approval...[/dim]")
+        console.print("[dim]Waiting for approval..." + (" (press Enter to continue without an account)" if can_skip else "") + "[/dim]")
 
     try:
-        session = pairing.pair(show)
+        session = pairing.pair(show, interrupt=watcher.wait if can_skip else None)
+    except pairing.PairingSkipped:
+        console.print("[green]✓[/green] continuing without an account - recordings upload anonymously")
+        return "skipped"
     except pairing.PairingError as exc:
         console.print(f"[red]Linking failed:[/red] {exc}")
-        return False
+        return "failed"
+    finally:
+        if watcher is not None:
+            watcher.close()
     console.print(f"[green]✓ linked as {session.get_username()}[/green]")
-    return True
+    return "linked"
+
+
+@deck_app.command(name="link")
+def link(
+    again: bool = typer.Option(False, "--again", help="Link even if an account is already linked (replaces it)"),
+    pause: bool = typer.Option(False, "--pause", help="Wait for Enter before closing (used by the menu entry)"),
+) -> None:
+    """Link this Deck to your account with a short code - optional, uploads work without one."""
+    from linux_game_benchmark.api.auth import get_current_session
+
+    session = get_current_session()
+    result = "linked"
+    if session and not again:
+        console.print(f"Already linked as [bold]{session.get_username()}[/bold]. "
+                      f"To use another account: {deck_setup.app_command()} deck unlink, then deck link.")
+    else:
+        result = _pair(allow_skip=True)
+    if pause:
+        try:
+            input("\nPress Enter to close this window ... ")
+        except EOFError:
+            pass
+    raise typer.Exit(1 if result == "failed" else 0)
+
+
+deck_app.command(name="pair", hidden=True)(link)             # the first name of the command
 
 
 @deck_app.command()
-def pair() -> None:
-    """Link this Deck to your account with a short code (approve it on your phone)."""
-    raise typer.Exit(0 if _pair() else 1)
+def unlink() -> None:
+    """Stop using your account on this Deck: recordings upload anonymously again."""
+    from linux_game_benchmark.api.auth import get_current_session, logout
+
+    session = get_current_session()
+    if session is None:
+        console.print("No account is linked - recordings already upload anonymously.")
+        return
+    name = session.get_username()
+    ok, message = logout()
+    if not ok:
+        console.print(f"[red]{message}[/red]")
+        raise typer.Exit(1)
+    console.print(f"[green]✓[/green] {name} unlinked - recordings upload anonymously now. Link again any time: {deck_setup.app_command()} deck link")
 
 
 @deck_app.command()
@@ -139,7 +202,7 @@ def status() -> None:
     console.print(f"Chord:       {cfg.chord}   recording: {cfg.record_seconds:.0f} s   "
                   f"auto-upload: {'on' if cfg.auto_upload else 'off'}")
     session = get_current_session()
-    console.print(f"Account:     {session.get_username() if session else 'not linked (lgb deck pair)'}")
+    console.print(f"Account:     {session.get_username() if session else 'none - uploads are anonymous (link: ' + deck_setup.app_command() + ' deck link)'}")
     reader = GamepadReader()
     pads = reader.rescan()
     console.print(f"Controller:  {', '.join(pads) if pads else 'no gamepad found'}"

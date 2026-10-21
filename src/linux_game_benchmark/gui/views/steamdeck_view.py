@@ -630,8 +630,8 @@ class SteamDeckView(QWidget):
             self._account_line.setText(f"Linked as {state.account}")
             _style(self._account_line, SUCCESS, 15, True)
         else:
-            self._account_line.setText("Not linked - recordings upload anonymously")
-            _style(self._account_line, WARNING, 15, True)
+            self._account_line.setText("No account - recordings upload anonymously (linking one is optional)")
+            _style(self._account_line, TEXT_PRIMARY, 15, True)
         self._link_btn.setText("Cancel" if self._pairing_active() else ("Link another account" if state.account else "Link account"))
 
         self._how_text.setText(
