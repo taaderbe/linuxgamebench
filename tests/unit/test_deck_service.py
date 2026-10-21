@@ -713,3 +713,103 @@ def test_the_recording_starts_with_the_first_frame_the_log_holds(overlay):
     overlay.service.tick(T0 + 91)
     frametimes = overlay.sent[0]["frametimes"]
     assert frametimes[0] == pytest.approx(99.0) and 3590 <= len(frametimes) <= 3610
+
+
+# ----- Game Mode as it really is: Steam's overlay program writes into the home folder, nothing configures it ----------------
+
+@pytest.fixture
+def home_overlay(tmp_path):
+    """Like `overlay`, but the overlay program writes into a home folder (with other people's files in it) and the service
+    keeps its own logs in `mangoapp-logs`."""
+    rig = Rig(tmp_path, overlay=True, cancel_window=10.0, record_seconds=0)
+    rig.home = tmp_path / "home"
+    rig.home.mkdir()
+    rig.service.mangoapp_intake_dir = rig.home
+
+    def overlay_log(on):
+        rig.overlay_calls.append(on)
+        if on and not rig.logging_now:
+            name = f"mangoapp_2026-10-20_18-00-{len(rig.overlay_files):02d}.csv"
+            rig.overlay_files.append(write_log(rig.home, name=name))
+        elif not on and rig.logging_now:
+            (rig.home / (rig.overlay_files[-1].stem + "_summary.csv")).write_text("summary")
+        rig.logging_now = on
+        return True
+    rig.service._overlay_log = overlay_log
+    return rig
+
+
+def home_mangoapp_files(rig):
+    return sorted(p.name for p in rig.home.glob("mangoapp_*"))
+
+
+def test_a_log_in_the_home_folder_is_recorded_and_then_moved_to_our_own_folder(home_overlay):
+    home_overlay.chord(T0 + 20)
+    home_overlay.chord(T0 + 80)
+    home_overlay.service.tick(T0 + 91)
+    assert home_overlay.sent and home_overlay.sent[0]["steam_app_id"] == 1245620
+    assert home_mangoapp_files(home_overlay) == [], "the home folder is tidy again"
+    assert sorted(p.name for p in home_overlay.overlay_dir.iterdir()) == [
+        "mangoapp_2026-10-20_18-00-00.csv", "mangoapp_2026-10-20_18-00-00_summary.csv"]
+
+
+def test_the_file_the_overlay_program_has_open_is_found_wherever_it_is(home_overlay, tmp_path):
+    """Its default folder is the home folder, but nobody promised that: the open file descriptor tells."""
+    elsewhere = tmp_path / "elsewhere"
+    plain = home_overlay.service._overlay_log
+
+    def into_other_folder(on):
+        ok = plain(on)
+        if on:                                                   # the file the overlay program "wrote" moves out of the scanned folder
+            moved = elsewhere / home_overlay.overlay_files[-1].name
+            elsewhere.mkdir(exist_ok=True)
+            home_overlay.overlay_files[-1].replace(moved)
+            home_overlay.overlay_files[-1] = moved
+        elif home_overlay.overlay_files:
+            (home_overlay.home / (home_overlay.overlay_files[-1].stem + "_summary.csv")).replace(
+                elsewhere / (home_overlay.overlay_files[-1].stem + "_summary.csv"))
+        return ok
+    home_overlay.service._overlay_log = into_other_folder
+    home_overlay.service._overlay_open_log = lambda before: home_overlay.overlay_files[-1] if home_overlay.overlay_files else None
+    home_overlay.chord(T0 + 20)
+    assert home_overlay.service.session.phase.value == "recording", home_overlay.said
+    home_overlay.chord(T0 + 80)
+    home_overlay.service.tick(T0 + 91)
+    assert home_overlay.sent and not list(elsewhere.glob("*.csv")), "moved on to our own folder"
+    assert (home_overlay.overlay_dir / "mangoapp_2026-10-20_18-00-00.csv").exists()
+
+
+def test_a_dropped_recording_leaves_no_log_in_the_home_folder_either(home_overlay):
+    home_overlay.chord(T0 + 20)
+    home_overlay.running = set()                                 # the game was closed during the recording
+    home_overlay.chord(T0 + 80)
+    assert "the game was closed during the recording" in home_overlay.said[-1] and home_overlay.sent == []
+    assert home_mangoapp_files(home_overlay) == []
+    assert (home_overlay.overlay_dir / "mangoapp_2026-10-20_18-00-00.csv").exists()
+
+
+def test_other_files_in_the_home_folder_are_never_touched(home_overlay):
+    import os
+    mine = {"results.csv": "my results", "budget_2026.csv": "money", "mangoapp_notes.txt": "notes"}
+    for name, text in mine.items():
+        (home_overlay.home / name).write_text(text)
+        os.utime(home_overlay.home / name, (1, 1))              # years old - the housekeeping must still leave them alone
+    import time
+    stale = home_overlay.home / "mangoapp_2026-10-01_00-00-00.csv"
+    stale.write_text("left behind by a crash")
+    hour_ago = time.time() - 3600                               # past the grace time, far from the 3 days after which logs go
+    os.utime(stale, (hour_ago, hour_ago))
+    home_overlay.chord(T0 + 20)
+    home_overlay.service.tick(T0 + 21)                          # the hourly housekeeping runs at the first tick
+    assert {n: (home_overlay.home / n).read_text() for n in mine} == mine
+    assert not stale.exists() and (home_overlay.overlay_dir / stale.name).exists(), "what a crash left behind is tidied up"
+    assert home_overlay.overlay_files[0].exists(), "the log being written stays where it is"
+
+
+def test_a_log_a_crash_left_behind_is_tidied_up_at_the_start(home_overlay):
+    import os
+    stale = home_overlay.home / "mangoapp_2026-10-01_00-00-00.csv"
+    stale.write_text("left behind")
+    os.utime(stale, (1, 1))
+    home_overlay.service.recover()
+    assert not stale.exists() and (home_overlay.overlay_dir / stale.name).exists()

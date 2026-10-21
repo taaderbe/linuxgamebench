@@ -55,3 +55,43 @@ def test_a_missing_tool_a_refusal_and_a_crash_are_all_just_no():
     def missing(*a, **k):
         raise FileNotFoundError("mangohudctl")
     assert mangoapp.set_logging(False, run=missing, which=lambda name: "/x") is False
+
+
+# ----- the log file the overlay program has open -------------------------------------------------------------------------
+
+def fake_proc_with_fds(tmp_path, *processes):
+    """A /proc with (comm, [file the process has open, ...]) per process."""
+    import os
+    for number, (comm, files) in enumerate(processes, start=200):
+        entry = tmp_path / str(number)
+        (entry / "fd").mkdir(parents=True)
+        (entry / "comm").write_text(comm + "\n")
+        for fd, target in enumerate(files, start=3):
+            os.symlink(target, entry / "fd" / str(fd))
+    return tmp_path
+
+
+def test_the_log_is_found_through_the_files_the_overlay_program_has_open(tmp_path):
+    proc = fake_proc_with_fds(tmp_path, ("mangoapp", ["/dev/null", "/home/deck/mangoapp_2026-10-21_16-39-49.csv"]))
+    assert mangoapp.open_log(proc=proc) == Path("/home/deck/mangoapp_2026-10-21_16-39-49.csv")
+
+
+def test_it_does_not_matter_which_folder_the_overlay_program_writes_to(tmp_path):
+    proc = fake_proc_with_fds(tmp_path, ("mangoapp", ["/somewhere/else/entirely/mangoapp_2026-10-21_16-39-49.csv"]))
+    assert mangoapp.open_log(proc=proc).parent == Path("/somewhere/else/entirely")
+
+
+def test_a_summary_and_an_old_log_are_not_the_new_one(tmp_path):
+    proc = fake_proc_with_fds(tmp_path, ("mangoapp", ["/h/mangoapp_2026-10-21_16-39-49_summary.csv", "/h/mangoapp_2026-10-21_16-00-00.csv"]))
+    assert mangoapp.open_log(exclude={"mangoapp_2026-10-21_16-00-00.csv"}, proc=proc) is None
+    assert mangoapp.open_log(proc=proc) == Path("/h/mangoapp_2026-10-21_16-00-00.csv")
+
+
+def test_only_the_overlay_program_counts(tmp_path):
+    proc = fake_proc_with_fds(tmp_path, ("firefox", ["/home/deck/Downloads/data.csv"]), ("bash", ["/home/deck/notes.csv"]))
+    assert mangoapp.open_log(proc=proc) is None
+
+
+def test_no_proc_and_no_overlay_program_are_just_none(tmp_path):
+    assert mangoapp.open_log(proc=tmp_path / "does-not-exist") is None
+    assert mangoapp.open_log(proc=tmp_path) is None

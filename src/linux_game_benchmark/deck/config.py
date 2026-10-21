@@ -28,6 +28,12 @@ def mangoapp_log_dir() -> Path:
     return data_dir() / "mangoapp-logs"
 
 
+def mangoapp_intake_dir() -> Path:
+    """Where Steam's overlay program writes a log when nothing tells it otherwise: the home folder. The service moves the finished
+    logs into `mangoapp_log_dir()` (and touches nothing else in the home folder)."""
+    return Path(os.path.expanduser("~"))
+
+
 def queue_dir() -> Path:
     return data_dir() / "queue"
 

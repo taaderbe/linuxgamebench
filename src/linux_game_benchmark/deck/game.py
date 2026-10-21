@@ -39,19 +39,22 @@ def newest_log(log_dir: Path, max_age: float = 60.0, now: Optional[float] = None
     return best[1] if best else None
 
 
-def log_names(log_dir: Path) -> set[str]:
+OVERLAY_LOG_PATTERN = "mangoapp_*.csv"          # what Steam's overlay program names its logs (it writes into the home folder)
+
+
+def log_names(log_dir: Path, pattern: str = "*.csv") -> set[str]:
     """The log files that exist right now - taken before a log is started on command, to tell the new one apart."""
     try:
-        return {p.name for p in Path(log_dir).glob("*.csv")}
+        return {p.name for p in Path(log_dir).glob(pattern)}
     except OSError:
         return set()
 
 
-def new_log(log_dir: Path, before: set[str]) -> Optional[Path]:
+def new_log(log_dir: Path, before: set[str], pattern: str = "*.csv") -> Optional[Path]:
     """The log file that appeared after `before` was taken (the newest one; a _summary never counts)."""
     best: Optional[tuple[float, Path]] = None
     try:
-        candidates = list(Path(log_dir).glob("*.csv"))
+        candidates = list(Path(log_dir).glob(pattern))
     except OSError:
         return None
     for path in candidates:

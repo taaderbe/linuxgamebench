@@ -7,10 +7,11 @@ overlay switched on). mangohudctl talks to mangoapp only, never to the MangoHud 
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable, Optional
 
 from linux_game_benchmark.deck.gamescope import host_env
 
@@ -33,6 +34,32 @@ def running(proc: Path = Path("/proc")) -> bool:
         except OSError:
             continue
     return False
+
+
+def open_log(exclude: Iterable[str] = (), proc: Path = Path("/proc")) -> Optional[Path]:
+    """The log file the overlay program has open right now, found through its file descriptors - so it does not matter which
+    folder it writes to (its own default is the home folder, nothing is configured for it). Names in `exclude` (logs that existed
+    before the start) and `_summary.csv` files are skipped."""
+    skip = set(exclude)
+    try:
+        entries = [e for e in proc.iterdir() if e.name.isdigit()]
+    except OSError:
+        return None
+    for entry in entries:
+        try:
+            if (entry / "comm").read_text().strip() != PROGRAM:
+                continue
+            fds = list((entry / "fd").iterdir())
+        except OSError:
+            continue
+        for fd in fds:
+            try:
+                target = Path(os.readlink(fd))
+            except OSError:
+                continue
+            if target.suffix == ".csv" and not target.stem.endswith("_summary") and target.name not in skip:
+                return target
+    return None
 
 
 def set_logging(on: bool, run: Callable = subprocess.run, which: Callable = shutil.which) -> bool:

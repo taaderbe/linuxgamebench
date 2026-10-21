@@ -5,12 +5,14 @@ import time
 import wave
 
 import httpx
+import re
+
 import pytest
 
 from linux_game_benchmark.deck import config as deck_config
 from linux_game_benchmark.deck import game, pairing
 from linux_game_benchmark.deck import setup as deck_setup
-from linux_game_benchmark.deck.queue import Queue, prune_logs
+from linux_game_benchmark.deck.queue import Queue, move_logs, prune_logs
 
 
 # ----- config ------------------------------------------------------------------
@@ -283,20 +285,46 @@ def test_the_desktop_mode_config_still_logs_all_the_time_with_every_sensor():
     assert "autostart_log=1" in text and set(deck_setup.SENSORS) <= {l.strip() for l in text.splitlines()}
 
 
-def test_steams_performance_overlay_does_not_get_the_variable(fake_home):
-    deck_setup.write_env_file()
-    text = deck_setup.mangoapp_dropin_path().read_text()
-    assert deck_setup.mangoapp_dropin_path().parent.name == "gamescope-mangoapp.service.d"
-    assert "[Service]" in text and "UnsetEnvironment=MANGOHUD_CONFIG" in text
-
-
 def test_removing_the_setup_takes_the_dropin_away_too(fake_home, monkeypatch):
     monkeypatch.setattr(deck_setup, "_systemctl", lambda *a: None)
     deck_setup.write_env_file()
-    assert deck_setup.mangoapp_dropin_path().exists() and deck_setup.steam_dropin_path().exists()
+    assert deck_setup.steam_dropin_path().exists()
     deck_setup.remove_all()
-    assert not deck_setup.mangoapp_dropin_path().exists() and not deck_setup.env_file_path().exists()
+    assert not deck_setup.env_file_path().exists()
     assert not deck_setup.steam_dropin_path().exists(), "Steam has to start in Game Mode exactly as SteamOS ships it again"
+
+
+def write_legacy_dropin():
+    path = deck_setup.mangoapp_dropin_path()
+    path.parent.mkdir(parents=True)
+    path.write_text('[Service]\nExecStart=\nExecStart=/usr/bin/env "MANGOHUD_CONFIG=read_cfg,output_folder=/x,log_interval=0" /usr/bin/mangoapp\n')
+    return path
+
+
+def test_an_install_leaves_steams_overlay_program_exactly_as_steamos_ships_it(fake_home):
+    """Found on the real Deck: a drop-in with its own MANGOHUD_CONFIG (needed `read_cfg` to keep Steam's level working) made
+    MangoHud read Steam's config twice - Steam's level 1 showed the FPS twice. The overlay program needs nothing of ours: it logs one
+    row per frame into the home folder when told to."""
+    deck_setup.write_env_file()
+    assert not deck_setup.mangoapp_dropin_path().exists()
+    written = [p for p in fake_home.rglob("*") if p.is_file()]
+    assert written, "the install wrote nothing?"
+    assert not [p for p in written if re.search(r"MANGOHUD_CONFIG(?!FILE)|read_cfg", p.read_text(errors="replace"))], \
+        "no file of ours may set MANGOHUD_CONFIG or read_cfg: the session value would reach Steam and every game"
+
+
+def test_an_install_removes_the_old_dropin_of_builds_up_to_20(fake_home):
+    old = write_legacy_dropin()
+    deck_setup.write_env_file()
+    assert not old.exists() and not old.parent.exists(), "the empty drop-in folder goes too"
+    assert deck_setup.remove_legacy_mangoapp_dropin() is False                # nothing left to remove
+
+
+def test_a_foreign_file_in_the_dropin_folder_stays(fake_home):
+    old = write_legacy_dropin()
+    (old.parent / "mine.conf").write_text("[Service]\n")
+    assert deck_setup.remove_legacy_mangoapp_dropin() is True
+    assert (old.parent / "mine.conf").exists()
 
 
 def test_steam_in_game_mode_starts_without_the_desktop_mode_variable(fake_home):
@@ -352,62 +380,11 @@ class FakeSystemctl:
         return SimpleNamespace(stdout="", stderr="", returncode=0)
 
 
-VENDOR_UNIT = """# /usr/lib/systemd/user/gamescope-mangoapp.service
-[Service]
-ExecStart=/usr/bin/mangoapp --steam
-EnvironmentFile=%t/gamescope-environment
-
-# /home/deck/.config/systemd/user/gamescope-mangoapp.service.d/linuxgamebench.conf
-[Service]
-ExecStart=
-ExecStart=/usr/bin/env "MANGOHUD_CONFIG=x" /usr/bin/old-copy-of-ours
-"""
-
-
-def test_the_overlay_program_gets_its_own_variable_with_only_the_log_folder_and_rate(fake_home, tmp_path, monkeypatch):
-    monkeypatch.setattr(deck_setup, "_systemctl", FakeSystemctl())
-    path = deck_setup.write_mangoapp_dropin()
-    lines = path.read_text().splitlines()
-    out = tmp_path / "data/deck/mangoapp-logs"
-    assert "UnsetEnvironment=MANGOHUD_CONFIG" in lines                       # the long session value still never reaches it
-    assert lines.index("ExecStart=") < lines.index(
-        f'ExecStart=/usr/bin/env "MANGOHUD_CONFIG=read_cfg,output_folder={out},log_interval=0" /usr/bin/mangoapp')
-    assert "autostart_log" not in path.read_text(), "a log is written when the recorder asks for one, never on its own"
-    assert out.is_dir()
-    assert not set(deck_setup.SENSORS) & set(deck_setup.mangoapp_env_options().split(",")), \
-        "a sensor list would show up on Steam's overlay"
-
-
-def test_steams_overlay_level_keeps_working_because_the_config_file_is_still_read(tmp_path):
-    """Found on the real Deck: with MANGOHUD_CONFIG set and no `read_cfg`, MangoHud ignored Steam's file, so the overlay
-    showed its default HUD all the time and Steam's "Off" did nothing."""
-    options = deck_setup.mangoapp_env_options(tmp_path).split(",")
-    assert options[0] == "read_cfg", "first, so the options after it (log folder, rate) win over the file and nothing else changes"
-    assert "no_display" not in options and "preset=1" not in options, "the level is Steam's to set, never ours"
-
-
-def test_the_overlay_command_is_taken_from_the_vendor_unit_not_from_our_own_drop_in(fake_home, monkeypatch):
-    monkeypatch.setattr(deck_setup, "_systemctl", FakeSystemctl(cat=VENDOR_UNIT))
-    assert deck_setup.vendor_mangoapp_command() == "/usr/bin/mangoapp --steam"
-    assert deck_setup.write_mangoapp_dropin().read_text().rstrip().endswith("/usr/bin/mangoapp --steam")
-
-
-@pytest.mark.parametrize("cat", [FakeSystemctl(cat_ok=False), FakeSystemctl(cat="no execstart here\n")])
-def test_without_a_readable_unit_the_default_command_is_used(fake_home, monkeypatch, cat):
-    monkeypatch.setattr(deck_setup, "_systemctl", cat)
-    assert deck_setup.vendor_mangoapp_command() == "/usr/bin/mangoapp"
-
-
 def test_a_missing_systemctl_does_not_break_the_setup(fake_home, monkeypatch):
     def boom(*a):
         raise FileNotFoundError("systemctl")
     monkeypatch.setattr(deck_setup, "_systemctl", boom)
-    assert deck_setup.vendor_mangoapp_command() == "/usr/bin/mangoapp"
     deck_setup.reload_mangoapp()                                               # must not raise
-
-
-def test_the_unit_quoting_survives_odd_paths():
-    assert deck_setup._unit_quote('a b"c%d$e\\f') == '"a b\\"c%%d$$e\\\\f"'
 
 
 @pytest.mark.parametrize("state, restarted", [("active", True), ("inactive", False), ("failed", False)])
@@ -422,8 +399,42 @@ def test_the_overlay_program_is_restarted_only_when_it_runs(monkeypatch, state, 
 def test_removing_the_setup_gives_the_overlay_program_back_to_steamos(fake_home, monkeypatch):
     fake = FakeSystemctl(active="active")
     monkeypatch.setattr(deck_setup, "_systemctl", fake)
-    deck_setup.write_env_file()
+    write_legacy_dropin()
     deck_setup.remove_all()
     assert not deck_setup.mangoapp_dropin_path().exists()
     assert ("restart", deck_setup.MANGOAPP_UNIT) in fake.calls               # it runs as SteamOS ships it again
 
+
+# ----- logs of Steam's overlay program: they land in the home folder, only those files are ever moved ---------------------
+
+def test_only_finished_overlay_logs_leave_the_home_folder(tmp_path):
+    import os
+    home, ours, now = tmp_path / "home", tmp_path / "ours", 1_000_000.0
+    home.mkdir()
+    old = {"mangoapp_2026-10-21_16-00-00.csv": "log", "mangoapp_2026-10-21_16-00-00_summary.csv": "summary"}
+    for name, text in old.items():
+        (home / name).write_text(text)
+        os.utime(home / name, (now - 3600, now - 3600))
+    (home / "mangoapp_2026-10-21_16-30-00.csv").write_text("still being written")            # younger than the grace time
+    os.utime(home / "mangoapp_2026-10-21_16-30-00.csv", (now - 30, now - 30))
+    for name in ("results.csv", "mangoapp_notes.txt", "budget_2026.csv"):                     # not ours, however old
+        (home / name).write_text("mine")
+        os.utime(home / name, (now - 99999, now - 99999))
+    assert move_logs(home, ours, "mangoapp_*.csv", now=now) == 2
+    assert sorted(p.name for p in ours.iterdir()) == sorted(old)
+    assert sorted(p.name for p in home.iterdir()) == ["budget_2026.csv", "mangoapp_2026-10-21_16-30-00.csv",
+                                                      "mangoapp_notes.txt", "results.csv"]
+
+
+def test_the_log_being_written_is_never_moved(tmp_path):
+    import os
+    home = tmp_path / "home"
+    home.mkdir()
+    active = home / "mangoapp_2026-10-21_16-00-00.csv"
+    active.write_text("x")
+    os.utime(active, (1, 1))
+    assert move_logs(home, tmp_path / "ours", "mangoapp_*.csv", keep=active, now=1_000_000.0) == 0 and active.exists()
+
+
+def test_a_missing_folder_is_nothing_to_move(tmp_path):
+    assert move_logs(tmp_path / "nowhere", tmp_path / "ours", "mangoapp_*.csv") == 0

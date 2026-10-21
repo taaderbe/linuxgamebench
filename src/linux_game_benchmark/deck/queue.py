@@ -95,6 +95,29 @@ class Queue:
         return removed
 
 
+def move_logs(src_dir: Path, dst_dir: Path, pattern: str, older_than: float = 600.0,
+              keep: Optional[Path] = None, now: Optional[float] = None) -> int:
+    """Move what Steam's overlay program left in `src_dir` (its default is the home folder) - and the `_summary.csv` next to it -
+    to our own folder. Only names that match `pattern` are touched, nothing else in the home folder, and nothing younger than
+    `older_than` seconds (a log that is still being written) or the log `keep`."""
+    now = time.time() if now is None else now
+    try:
+        found = sorted(Path(src_dir).glob(pattern))
+    except OSError:
+        return 0
+    moved = 0
+    for path in found:
+        try:
+            if path == keep or now - path.stat().st_mtime < older_than:
+                continue
+            Path(dst_dir).mkdir(parents=True, exist_ok=True)
+            shutil.move(str(path), str(Path(dst_dir) / path.name))
+            moved += 1
+        except OSError:
+            continue
+    return moved
+
+
 def prune_logs(log_dir: Path, keep_days: float = 3.0, max_bytes: int = 600 * 1024 * 1024,
                active: Optional[Path] = None, now: Optional[float] = None) -> int:
     """The flight recorder writes all the time: drop old logs and keep the folder below max_bytes."""

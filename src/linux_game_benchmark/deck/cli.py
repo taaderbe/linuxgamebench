@@ -203,6 +203,7 @@ def run() -> None:
         queue=Queue(deck_config.queue_dir()),
         log_dir=deck_config.log_dir(),
         mangoapp_log_dir=deck_config.mangoapp_log_dir(),
+        mangoapp_intake_dir=deck_config.mangoapp_intake_dir(),
         work_dir=deck_config.data_dir() / "work",
         play=play,
         say=lambda text: print(f"[{time.strftime('%H:%M:%S')}] {text}", flush=True),
@@ -239,7 +240,7 @@ def status() -> None:
     reader.close()
     conf_ok = deck_setup.is_managed(deck_setup.mangohud_conf_path())
     console.print(f"MangoHud:    {'configured' if conf_ok else 'not configured (lgb deck setup)'}")
-    overlay_ok = deck_setup.mangoapp_dropin_path().exists()
+    overlay_ok = deck_setup.unit_path().exists()
     game_mode = ("every game is recorded (OpenGL, Vulkan, Proton); with Steam's performance overlay on, a red dot shows meanwhile"
                  if overlay_ok else "not set up (lgb deck setup)")
     console.print(f"Game Mode:   {game_mode}")

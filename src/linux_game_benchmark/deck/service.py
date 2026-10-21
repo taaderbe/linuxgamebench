@@ -11,6 +11,7 @@ All collaborators are injectable, so the whole flow (chord -> cut -> queue -> up
 from __future__ import annotations
 
 import json
+import shutil
 import time
 import traceback
 from dataclasses import dataclass
@@ -80,6 +81,8 @@ class DeckService:
         read_software: Optional[Callable[[Optional[deck_game.GameInfo]], dict]] = None,
         read_display: Optional[Callable[[Optional[deck_game.GameInfo]], dict]] = None,
         mangoapp_log_dir: Optional[Path] = None,
+        mangoapp_intake_dir: Optional[Path] = None,
+        overlay_open_log: Callable[[set], Optional[Path]] = deck_mangoapp.open_log,
         running_games: Callable[[], set] = deck_game.running_steam_games,
         overlay_running: Callable[[], bool] = deck_mangoapp.running,
         overlay_log: Callable[[bool], bool] = deck_mangoapp.set_logging,
@@ -93,6 +96,8 @@ class DeckService:
         self.queue = queue
         self.log_dir = log_dir
         self.mangoapp_log_dir = mangoapp_log_dir
+        self.mangoapp_intake_dir = mangoapp_intake_dir or mangoapp_log_dir     # where the overlay program writes (its default: home)
+        self._overlay_open_log = overlay_open_log
         self._running_games, self._overlay_running, self._overlay_log = running_games, overlay_running, overlay_log
         self._focused_app, self._describe, self._wait_closed, self._overlay_wait = focused_app, describe, wait_closed, overlay_wait
         self._overlay_on = False                 # the overlay program is logging because this service told it to
@@ -197,7 +202,7 @@ class DeckService:
             self._refuse("the game is not in front (Steam's menu is open?) - go back into the game and press again")
             return
         game = self._describe(app_id)
-        before = deck_game.log_names(self.mangoapp_log_dir)
+        before = deck_game.log_names(self.mangoapp_intake_dir, deck_game.OVERLAY_LOG_PATTERN)
         if not self._start_overlay_log():
             self._refuse("could not start the log (mangohudctl did not answer) - run 'lgb deck setup' once")
             return
@@ -251,10 +256,40 @@ class DeckService:
     def _wait_for_new_log(self, before: set) -> Optional[Path]:
         deadline = time.monotonic() + self._overlay_wait
         while True:
-            found = deck_game.new_log(self.mangoapp_log_dir, before)
+            found = self._open_overlay_log(before) or deck_game.new_log(
+                self.mangoapp_intake_dir, before, deck_game.OVERLAY_LOG_PATTERN)
             if found is not None or time.monotonic() >= deadline:
                 return found
             time.sleep(0.1)
+
+    def _open_overlay_log(self, before: set) -> Optional[Path]:
+        """The log file the overlay program has open (asked of the system, not guessed from a folder)."""
+        try:
+            return self._overlay_open_log(before)
+        except Exception:
+            return None
+
+    def _archive_log(self, log: Path) -> Path:
+        """The overlay program writes into the home folder (nothing configures it). The finished log - and its summary - moves to
+        our own folder, so the home stays tidy and the housekeeping only ever looks at files that are ours."""
+        dest = self.mangoapp_log_dir
+        if dest is None or log.parent == dest:
+            return log
+        try:
+            dest.mkdir(parents=True, exist_ok=True)
+            for src in (log, log.with_name(log.stem + "_summary.csv")):
+                if src.exists():
+                    shutil.move(str(src), str(dest / src.name))
+            return dest / log.name
+        except OSError:
+            return log
+
+    def _sweep_intake(self) -> None:
+        """Logs a crash or a kill left behind in the home folder (never the one that is being written, never other files)."""
+        if self.mangoapp_log_dir is None or self.mangoapp_intake_dir in (None, self.mangoapp_log_dir):
+            return
+        keep = self._active.log if self._active and self._active.on_demand else None
+        deck_queue.move_logs(self.mangoapp_intake_dir, self.mangoapp_log_dir, deck_game.OVERLAY_LOG_PATTERN, keep=keep)   # incl. summaries
 
     def _watch_front(self, active: "Active", now: float) -> None:
         """Count the seconds something else than the game was in front (the overlay log would hold those frames)."""
@@ -285,6 +320,7 @@ class DeckService:
                 self._overlay_log(False)
             except Exception:
                 pass
+            self._sweep_intake()
 
     def close(self) -> None:
         """At service stop: never leave a log running."""
@@ -338,12 +374,13 @@ class DeckService:
             return
         if active.on_demand:
             self._stop_overlay_log()             # ends the log file: from here on nothing more is written to it
+            self._wait_closed(active.log)
+            active.log = self._archive_log(active.log)
             problem = self._overlay_problem(active, now)
             if problem:
                 self.session.reset()
                 self._message(problem, "error")
                 return
-            self._wait_closed(active.log)
         else:
             newest = self._newest_log(self.log_dir)
             if newest is not None and newest != active.log:
@@ -397,6 +434,7 @@ class DeckService:
             self._last_housekeeping = now
             self.queue.prune()
             deck_queue.prune_logs(self.log_dir, active=self._active.log if self._active and not self._active.on_demand else None)
+            self._sweep_intake()
             if self.mangoapp_log_dir is not None:
                 deck_queue.prune_logs(self.mangoapp_log_dir, active=self._active.log if self._active and self._active.on_demand else None)
         if self._active and self._active.sampler and self.session.phase.value == "recording":

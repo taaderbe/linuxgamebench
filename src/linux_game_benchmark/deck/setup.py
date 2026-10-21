@@ -49,25 +49,15 @@ position=top-right
 {MARKER_END}
 """
 
-# Game Mode points MANGOHUD_CONFIGFILE at a file of its own (Steam's performance overlay), so our config file is never read
-# there and the MangoHud layer inside the games stays quiet. Game Mode is recorded through Steam's overlay program instead
-# (it sees every game): its drop-in below only says where the log goes - a log is written when the recorder asks for one.
+# Game Mode is recorded through Steam's own overlay program (mangoapp, it sees every game - also OpenGL): the recorder tells it
+# `mangohudctl set log_session true|false`. It needs NO setting of ours: it logs one row per frame and writes into the home
+# folder, the recorder finds the file through mangoapp's open file descriptors. (Builds up to 20 wrapped mangoapp in a drop-in
+# with its own MANGOHUD_CONFIG; MangoHud then reads Steam's config twice, which showed Steam's level 1 with the FPS twice - the
+# drop-in is only kept as a name so that an old one is removed.)
 MANGOAPP_DROPIN = "gamescope-mangoapp.service.d/linuxgamebench.conf"
 MANGOAPP_UNIT = "gamescope-mangoapp.service"
 # Steam itself runs as this unit in Game Mode only (never in Desktop Mode); every game inherits the environment it gets.
 STEAM_DROPIN = "steam-launcher.service.d/linuxgamebench.conf"
-MANGOAPP_FALLBACK_COMMAND = "/usr/bin/mangoapp"
-
-
-def mangoapp_env_options(out_dir: Optional[Path] = None) -> str:
-    """`read_cfg` first, then where the log goes and one row per frame. No `autostart_log` (the recorder starts a log with
-    `mangohudctl set log_session`) and no sensor list, so what Steam's overlay shows stays as the player set it.
-
-    `read_cfg` is what keeps Steam's performance overlay switch working: as soon as MANGOHUD_CONFIG is set MangoHud ignores the
-    config file (the one Steam writes its level - Off, Minimal ... - into) unless it is told to read it as well. Without it the
-    overlay would show MangoHud's default HUD all the time and "Off" in Steam would do nothing."""
-    out_dir = out_dir or deck_config.mangoapp_log_dir()
-    return ",".join(["read_cfg", f"output_folder={out_dir}", "log_interval=0"])
 
 
 def home() -> Path:
@@ -116,7 +106,7 @@ def write_env_file(path: Optional[Path] = None, conf: Optional[Path] = None) -> 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("# Written by Linux Game Bench\nMANGOHUD=1\n"
                     f"MANGOHUD_CONFIGFILE={conf}\n")
-    write_mangoapp_dropin()
+    remove_legacy_mangoapp_dropin()
     write_steam_dropin()
     return path
 
@@ -161,50 +151,22 @@ def mangoapp_dropin_path() -> Path:
     return home() / ".config/systemd/user" / MANGOAPP_DROPIN
 
 
-def vendor_mangoapp_command() -> str:
-    """The command SteamOS starts the overlay with (read from the unit, so a changed path or argument is followed)."""
-    try:
-        result = _systemctl("cat", MANGOAPP_UNIT)
-        text = result.stdout if result is not None and result.returncode == 0 else ""
-    except (OSError, subprocess.SubprocessError):
-        text = ""
-    source = ""
-    for line in text.splitlines():
-        if line.startswith("# /"):
-            source = line[2:].strip()
-        elif line.startswith("ExecStart=") and ".service.d/" not in source:
-            command = line[len("ExecStart="):].strip().lstrip("-@:+!")
-            if command and "$" not in command and "%" not in command:
-                return command
-    return MANGOAPP_FALLBACK_COMMAND
-
-
-def _unit_quote(text: str) -> str:
-    """One argument of a systemd Exec line (specifiers and variables escaped, whole thing in double quotes)."""
-    return '"' + text.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%").replace("$", "$$") + '"'
-
-
-def write_mangoapp_dropin() -> Path:
-    """Steam's own performance overlay (mangoapp) writes the log of every game in Game Mode - on command.
-
-    MangoHud's Vulkan layer cannot see OpenGL games (Brotato, Godot, many native titles), but Gamescope hands the frame data
-    of EVERY game to mangoapp. So mangoapp gets its own variable with the folder for the logs (the plain session value never
-    reaches it, that is what UnsetEnvironment is for); what it shows on screen stays exactly as the player set it in Steam."""
+def remove_legacy_mangoapp_dropin() -> bool:
+    """Builds up to 20 put a drop-in around Steam's overlay program; with it Steam's performance level 1 showed the FPS twice.
+    An install removes it (the overlay program runs as SteamOS ships it again). True when there was one."""
     path = mangoapp_dropin_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    deck_config.mangoapp_log_dir().mkdir(parents=True, exist_ok=True)
-    command = vendor_mangoapp_command()
-    path.write_text(
-        "# Written by Linux Game Bench: the recorder tells this overlay program to log a game (also OpenGL) while it records; the overlay looks the same\n"
-        "[Service]\n"
-        "UnsetEnvironment=MANGOHUD_CONFIG\n"
-        "ExecStart=\n"
-        f"ExecStart=/usr/bin/env {_unit_quote('MANGOHUD_CONFIG=' + mangoapp_env_options())} {command}\n")
-    return path
+    if not path.exists():
+        return False
+    path.unlink()
+    try:
+        path.parent.rmdir()                         # only when it is empty now
+    except OSError:
+        pass
+    return True
 
 
 def reload_mangoapp() -> None:
-    """Make a changed drop-in count now: reload systemd and restart the overlay program if it runs (Game Mode)."""
+    """Make changed drop-ins count now: reload systemd and restart the overlay program if it runs (Game Mode), so it runs as SteamOS ships it."""
     try:
         _systemctl("daemon-reload")
         result = _systemctl("is-active", MANGOAPP_UNIT)
