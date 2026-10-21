@@ -58,10 +58,14 @@ MANGOAPP_FALLBACK_COMMAND = "/usr/bin/mangoapp"
 
 
 def mangoapp_env_options(out_dir: Optional[Path] = None) -> str:
-    """Where the log goes and one row per frame. No `autostart_log` (the recorder starts a log with `mangohudctl set log_session`)
-    and no sensor list, so what Steam's overlay shows stays as the player set it."""
+    """`read_cfg` first, then where the log goes and one row per frame. No `autostart_log` (the recorder starts a log with
+    `mangohudctl set log_session`) and no sensor list, so what Steam's overlay shows stays as the player set it.
+
+    `read_cfg` is what keeps Steam's performance overlay switch working: as soon as MANGOHUD_CONFIG is set MangoHud ignores the
+    config file (the one Steam writes its level - Off, Minimal ... - into) unless it is told to read it as well. Without it the
+    overlay would show MangoHud's default HUD all the time and "Off" in Steam would do nothing."""
     out_dir = out_dir or deck_config.mangoapp_log_dir()
-    return ",".join([f"output_folder={out_dir}", "log_interval=0"])
+    return ",".join(["read_cfg", f"output_folder={out_dir}", "log_interval=0"])
 
 
 def home() -> Path:

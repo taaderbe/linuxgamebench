@@ -334,11 +334,19 @@ def test_the_overlay_program_gets_its_own_variable_with_only_the_log_folder_and_
     out = tmp_path / "data/deck/mangoapp-logs"
     assert "UnsetEnvironment=MANGOHUD_CONFIG" in lines                       # the long session value still never reaches it
     assert lines.index("ExecStart=") < lines.index(
-        f'ExecStart=/usr/bin/env "MANGOHUD_CONFIG=output_folder={out},log_interval=0" /usr/bin/mangoapp')
+        f'ExecStart=/usr/bin/env "MANGOHUD_CONFIG=read_cfg,output_folder={out},log_interval=0" /usr/bin/mangoapp')
     assert "autostart_log" not in path.read_text(), "a log is written when the recorder asks for one, never on its own"
     assert out.is_dir()
     assert not set(deck_setup.SENSORS) & set(deck_setup.mangoapp_env_options().split(",")), \
         "a sensor list would show up on Steam's overlay"
+
+
+def test_steams_overlay_level_keeps_working_because_the_config_file_is_still_read(tmp_path):
+    """Found on the real Deck: with MANGOHUD_CONFIG set and no `read_cfg`, MangoHud ignored Steam's file, so the overlay
+    showed its default HUD all the time and Steam's "Off" did nothing."""
+    options = deck_setup.mangoapp_env_options(tmp_path).split(",")
+    assert options[0] == "read_cfg", "first, so the options after it (log folder, rate) win over the file and nothing else changes"
+    assert "no_display" not in options and "preset=1" not in options, "the level is Steam's to set, never ours"
 
 
 def test_the_overlay_command_is_taken_from_the_vendor_unit_not_from_our_own_drop_in(fake_home, monkeypatch):
