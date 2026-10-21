@@ -31,8 +31,11 @@ def setup(
     no_pair: bool = typer.Option(False, "--no-pair", hidden=True, help="Same as --anonymous"),
     force: bool = typer.Option(False, "--force", help="Set up even if this is not a Steam Deck"),
     seconds: Optional[int] = typer.Option(None, "--seconds", help="Length of one recording in seconds (30-300, default 60)"),
+    link_ticket: Optional[str] = typer.Option(None, "--link-ticket", envvar="LGB_LINK_TICKET", hidden=True,
+                                              help="One-time key from the install file of the website (the installer passes it on)"),
 ) -> None:
     """One-time setup (safe to run again): recorder, background service, sounds, account link."""
+    os.environ.pop("LGB_LINK_TICKET", None)          # a secret: not for the child processes started below
     deck = detect_steam_deck()
     if deck.is_deck:
         console.print(f"[green]{deck.name} detected[/green]"
@@ -60,7 +63,9 @@ def setup(
     console.print(f"{'[green]✓[/green]' if ok else '[red]✗[/red]'} background service: {message}")
 
     from linux_game_benchmark.api.auth import is_logged_in
-    if is_logged_in():
+    if link_ticket and not (anonymous or no_pair) and _redeem_ticket(link_ticket):
+        pass
+    elif is_logged_in():
         console.print("[green]✓[/green] account already linked")
     elif anonymous or no_pair:
         console.print("[green]✓[/green] no account: recordings upload anonymously")
@@ -76,6 +81,21 @@ def setup(
                   f"then press [bold]{cfg.chord.split('>')[1]}[/bold]. It records {cfg.record_seconds:.0f} s, "
                   f"stops by itself{' and uploads' if cfg.auto_upload else ''} (the same chord ends it earlier).")
     console.print("[bold]Now switch back to Game Mode - that is all.[/bold]")
+
+
+def _redeem_ticket(ticket: str) -> bool:
+    """Link the account with the key the website's install file carried. False = it did not work (the caller goes on
+    with the normal way: a code to approve, or no account)."""
+    from linux_game_benchmark.deck import pairing
+
+    try:
+        session = pairing.redeem(ticket)
+    except pairing.PairingError as exc:
+        console.print(f"[yellow]The account link from the install file did not work:[/yellow] {exc}")
+        console.print("  The key works once and for 30 minutes. Download the file again while you are logged in - or link with a code instead.")
+        return False
+    console.print(f"[green]✓ linked as {session.get_username()}[/green] (from the install file)")
+    return True
 
 
 def _link_later_hint() -> None:

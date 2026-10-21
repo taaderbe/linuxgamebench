@@ -57,6 +57,33 @@ def poll(device_code: str, base_url: Optional[str] = None, timeout: float = 15.0
     return {"status": "pending"}
 
 
+def _session_from(answer: dict, save: bool) -> AuthSession:
+    session = AuthSession(
+        access_token=answer["access_token"],
+        refresh_token=answer["refresh_token"],
+        user=answer.get("user", {}),
+        stage=settings.CURRENT_STAGE,
+    )
+    if save:
+        session.save()
+    return session
+
+
+def redeem(ticket: str, base_url: Optional[str] = None, save: bool = True, tries: int = 3,
+           sleep: Callable[[float], None] = time.sleep) -> AuthSession:
+    """Collect the session of a ticket the website approved in advance (the install file carries one).
+
+    The ticket works once and for a short time; an unknown, used or expired one raises PairingError. A network blip is
+    retried a few times - the ticket is only used up when the server actually hands out the session."""
+    for attempt in range(max(1, tries)):
+        answer = poll(ticket.strip(), base_url)       # raises PairingError for unknown / used / expired / denied
+        if answer.get("status") == "approved":
+            return _session_from(answer, save)
+        if attempt + 1 < tries:
+            sleep(2.0)
+    raise PairingError("the server did not answer in time")
+
+
 def pair(show: Callable[[dict], None], base_url: Optional[str] = None, label: str = "Steam Deck",
          sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
          save: bool = True, interrupt: Optional[Callable[[float], bool]] = None) -> AuthSession:
@@ -76,13 +103,5 @@ def pair(show: Callable[[dict], None], base_url: Optional[str] = None, label: st
             sleep(interval)
         answer = poll(info["device_code"], base_url)
         if answer.get("status") == "approved":
-            session = AuthSession(
-                access_token=answer["access_token"],
-                refresh_token=answer["refresh_token"],
-                user=answer.get("user", {}),
-                stage=settings.CURRENT_STAGE,
-            )
-            if save:
-                session.save()
-            return session
+            return _session_from(answer, save)
     raise PairingError("the code expired before it was approved")
