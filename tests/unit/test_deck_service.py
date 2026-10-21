@@ -41,6 +41,8 @@ class Rig:
         self.cfg = deck_config.DeckConfig(**config)
         self.sounds, self.said, self.sent = [], [], []
         self.send_result = (True, "https://linuxgamebench.com/benchmark/1", "")
+        self.display_seen: dict = {}                  # what "Gamescope" says about the game's window; nothing by default
+        self.display_looks = 0
         self.game = GameInfo(1245620, "Elden Ring", pid=4242)
         self.sysroot = build_deck(tmp_path / "sysroot")
         self.newest = self.log
@@ -55,7 +57,12 @@ class Rig:
             sampler_factory=lambda: telemetry.Sampler(self.sysroot),
             read_env=lambda pid: {"PROTON_NO_ESYNC": "1", "HOME": "/home/deck"} if pid == 4242 else {},
             read_software=lambda game: {"compat": "proton", "proton": "Proton 9.0 (Beta)"} if game else {},
+            read_display=self._read_display,
         )
+
+    def _read_display(self, game):
+        self.display_looks += 1
+        return dict(self.display_seen) if game else {}
 
     def _send(self, kwargs):
         self.sent.append(kwargs)
@@ -337,3 +344,43 @@ def test_the_pad_list_is_rescanned_every_two_seconds_even_while_a_pad_is_read():
 
     run_forever(Service(), Reader(), stop=lambda: clock["t"] >= 20, clock=now)
     assert Reader.scans >= 9, Reader.scans          # ~20 s of loop time -> a scan every 2 s
+
+
+def test_the_games_render_resolution_and_steam_limits_end_up_in_the_upload(rig):
+    rig.display_seen = {"render_mode": "1280x720", "fps_limit": 40, "scaling_filter": "fsr", "scaling_mode": "auto", "fsr_sharpness": 2}
+    rig.chord(T0 + 20)
+    rig.chord(T0 + 80)
+    rig.service.tick(T0 + 91)
+    payload = rig.sent[0]
+    assert payload["resolution"] == "1280x720", "the measured size replaces the Deck's native 1280x800"
+    display = payload["device_state"]["display"]
+    assert display["render_mode"] == "1280x720" and display["fps_limit"] == 40 and display["scaling_filter"] == "fsr"
+    assert display["internal_mode"] and display["fsr_sharpness"] == 2, "the panel's own mode stays next to it"
+
+
+def test_without_a_measurement_the_panel_mode_is_used_and_no_render_mode_is_claimed(rig):
+    rig.chord(T0 + 20)
+    rig.chord(T0 + 80)
+    rig.service.tick(T0 + 91)
+    payload = rig.sent[0]
+    assert payload["resolution"] == "1280x800"
+    assert "render_mode" not in payload["device_state"]["display"]
+
+
+def test_the_window_is_looked_at_while_the_recording_runs_not_only_at_the_ends(auto):
+    auto.display_seen = {"render_mode": "1280x720"}
+    auto.chord(T0 + 20)
+    looks_at_start = auto.display_looks
+    for second in range(21, 80, 5):
+        auto.service.tick(T0 + second)
+    assert auto.display_looks - looks_at_start >= 2, "a look every 20 s while it records"
+
+
+def test_a_failing_look_never_costs_the_recording(rig):
+    def broken(game):
+        raise RuntimeError("xprop exploded")
+    rig.service._read_display = broken
+    rig.chord(T0 + 20)
+    rig.chord(T0 + 80)
+    rig.service.tick(T0 + 91)
+    assert len(rig.sent) == 1 and rig.sent[0]["resolution"] == "1280x800"

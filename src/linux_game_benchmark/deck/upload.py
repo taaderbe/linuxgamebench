@@ -77,6 +77,14 @@ def compress_log(path: Path) -> Optional[str]:
         return None
 
 
+def game_resolution(analyzer, device_state: Optional[dict]) -> str:
+    """The resolution the game rendered at, as measured on the screen server (Gamescope); else what the log says (MangoHud
+    writes no such column today); else the panel's own mode; the Deck's native mode as the last resort."""
+    display = (device_state or {}).get("display") or {}
+    return (display.get("render_mode") or getattr(analyzer, "resolution", None)
+            or display.get("internal_mode") or DECK_NATIVE_RESOLUTION)
+
+
 def prepare(segment: Path, game: dict, deck: DeckInfo, system_info: Optional[dict] = None,
             device_state: Optional[dict] = None) -> tuple[Optional[Prepared], str]:
     """Analyse + validate a segment. Returns (Prepared, "") or (None, reason)."""
@@ -102,7 +110,7 @@ def prepare(segment: Path, game: dict, deck: DeckInfo, system_info: Optional[dic
     kwargs = {
         "steam_app_id": int(game["app_id"]),
         "game_name": game["name"],
-        "resolution": getattr(analyzer, "resolution", None) or DECK_NATIVE_RESOLUTION,
+        "resolution": game_resolution(analyzer, device_state),
         "system_info": flatten_system(system_info, deck),
         "metrics": flatten_metrics(metrics),
         "frametimes": frametimes or None,

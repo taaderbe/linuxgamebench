@@ -15,7 +15,7 @@ from typing import Callable, Optional
 from linux_game_benchmark.deck import config as deck_config
 from linux_game_benchmark.deck import game as deck_game
 from linux_game_benchmark.deck import queue as deck_queue
-from linux_game_benchmark.deck import segments, telemetry, upload
+from linux_game_benchmark.deck import gamescope, segments, telemetry, upload
 from linux_game_benchmark.deck.chord import ChordTracker, parse_chord
 from linux_game_benchmark.deck.detect import DeckInfo
 from linux_game_benchmark.deck.session import Event, RecordingSession, Segment
@@ -26,12 +26,21 @@ def _default_software(game: Optional[deck_game.GameInfo]) -> dict:
     return telemetry.read_software(tools=tools)
 
 
+def _default_display(game: Optional[deck_game.GameInfo]) -> dict:
+    return gamescope.probe(game.pid, game.app_id) if game else {}
+
+
+DISPLAY_PROBE_INTERVAL = 20.0            # seconds between looks at the game's window while a recording runs
+
+
 @dataclass
 class Active:
     log: Path
     log_start: float
     game: Optional[deck_game.GameInfo]
     sampler: Optional[telemetry.Sampler] = None
+    looks: Optional[list] = None             # what Gamescope said about the game's window, one entry per look
+    last_look: float = 0.0
 
 
 class DeckService:
@@ -55,6 +64,7 @@ class DeckService:
         sampler_factory: Callable[[], telemetry.Sampler] = telemetry.Sampler,
         read_env: Callable[[int], dict] = telemetry.read_process_env,
         read_software: Optional[Callable[[Optional[deck_game.GameInfo]], dict]] = None,
+        read_display: Optional[Callable[[Optional[deck_game.GameInfo]], dict]] = None,
     ):
         self.config = config
         self.deck = deck
@@ -67,6 +77,7 @@ class DeckService:
         self.status_file = status_file
         self._sampler_factory, self._read_env = sampler_factory, read_env
         self._read_software = read_software or _default_software
+        self._read_display = read_display or _default_display
         self.tracker = ChordTracker(parse_chord(config.chord))
         self.session = RecordingSession(config.min_seconds, config.cancel_window, config.auto_upload, config.record_seconds)
         self._active: Optional[Active] = None
@@ -116,10 +127,21 @@ class DeckService:
             self.session.reset()
             self._message("no running game found - start a game first", "error")
             return
-        self._active = Active(log, start, self._identify(log), self._start_sampler(now))
+        self._active = Active(log, start, self._identify(log), self._start_sampler(now), looks=[])
+        self._look(self._active, now)
         name = self._active.game.name if self._active.game else "unknown game"
         limit = f" - stops by itself after {self.config.record_seconds:.0f} s" if self.config.record_seconds else ""
         self._message(f"recording {name}{limit}", "start")
+
+    def _look(self, active: "Active", now: float) -> None:
+        """Ask Gamescope what the game renders at and which limits Steam applied (a bonus: never a reason to lose a recording)."""
+        active.last_look = now
+        try:
+            seen = self._read_display(active.game)
+        except Exception:
+            return
+        if seen and active.looks is not None:
+            active.looks.append(seen)
 
     def _start_sampler(self, now: float) -> Optional[telemetry.Sampler]:
         try:
@@ -130,12 +152,18 @@ class DeckService:
             return None
 
     def _device_state(self, active: "Active", now: float) -> dict:
-        if active.sampler is None:
-            return {}
-        try:
-            env = self._read_env(active.game.pid) if active.game and active.game.pid else None
-            state = active.sampler.finish(now, env)
-        except Exception:
+        state: dict = {}
+        if active.sampler is not None:
+            try:
+                env = self._read_env(active.game.pid) if active.game and active.game.pid else None
+                state = active.sampler.finish(now, env)
+            except Exception:
+                state = {}
+        self._look(active, now)
+        seen = gamescope.condense(active.looks or [])
+        if seen:
+            state = {**state, "display": {**state.get("display", {}), **seen}}
+        if not state:
             return {}
         try:
             software = self._read_software(active.game)
@@ -207,6 +235,8 @@ class DeckService:
                 self._active.sampler.sample(now)             # power source, TDP, brightness ... while it runs
             except Exception:
                 pass
+        if self._active and self.session.phase.value == "recording" and now - self._active.last_look >= DISPLAY_PROBE_INTERVAL:
+            self._look(self._active, now)
         self._write_status(now)
 
     def upload_item(self, item: deck_queue.Item, now: Optional[float] = None) -> bool:
