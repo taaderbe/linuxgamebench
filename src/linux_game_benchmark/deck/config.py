@@ -23,6 +23,11 @@ def log_dir() -> Path:
     return data_dir() / "logs"
 
 
+def mangoapp_log_dir() -> Path:
+    """Logs written by Steam's performance overlay (Game Mode): every game, also the OpenGL ones. Kept apart from `logs`."""
+    return data_dir() / "mangoapp-logs"
+
+
 def queue_dir() -> Path:
     return data_dir() / "queue"
 

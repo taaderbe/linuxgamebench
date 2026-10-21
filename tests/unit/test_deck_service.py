@@ -35,9 +35,15 @@ def write_log(directory: Path, seconds=300, fps=60, name="eldenring.exe_2026-10-
 
 
 class Rig:
-    def __init__(self, tmp_path, **config):
+    def __init__(self, tmp_path, mangoapp=False, **config):
         self.log_dir = tmp_path / "logs"
         self.log = write_log(self.log_dir)
+        # Game Mode: Steam's overlay program writes a log of its own (it sees every game, also OpenGL ones)
+        self.mangoapp_dir = tmp_path / "mangoapp-logs" if mangoapp else None
+        self.mangoapp_log = write_log(self.mangoapp_dir, name="mangoapp_2026-10-20_18-00-00.csv") if mangoapp else None
+        self.newest_by_dir: dict = {}                 # per folder: what "the newest log" is (default: self.newest for every folder)
+        self.running = {1245620}                      # app ids Steam is running right now
+        self.restarts: list = []                      # times the overlay program was asked to start a new log
         self.cfg = deck_config.DeckConfig(**config)
         self.sounds, self.said, self.sent = [], [], []
         self.send_result = (True, "https://linuxgamebench.com/benchmark/1", "")
@@ -50,7 +56,10 @@ class Rig:
         self.service = DeckService(
             self.cfg, DECK, queue=self.queue, log_dir=self.log_dir, work_dir=tmp_path / "work",
             play=self.sounds.append, say=self.said.append,
-            newest_log=lambda d: self.newest, identify=lambda p: self.game,
+            newest_log=lambda d: self.newest_by_dir[d] if d in self.newest_by_dir else self.newest,
+            identify=lambda p: self.game,
+            mangoapp_log_dir=self.mangoapp_dir, running_games=lambda: set(self.running),
+            restart_mangoapp=lambda: self.restarts.append(1),
             wait_flushed=lambda *a, **k: True,
             prepare=lambda seg, game, deck, device_state=None: upload.prepare(seg, game, deck, system_info=SYSTEM, device_state=device_state),
             send=self._send,
@@ -384,3 +393,106 @@ def test_a_failing_look_never_costs_the_recording(rig):
     rig.chord(T0 + 80)
     rig.service.tick(T0 + 91)
     assert len(rig.sent) == 1 and rig.sent[0]["resolution"] == "1280x800"
+
+
+# ----- Game Mode: OpenGL games are only visible to Steam's overlay program -------------------------------------------------
+
+@pytest.fixture
+def opengl(tmp_path):
+    """An OpenGL game (Brotato): MangoHud's Vulkan layer is not in it, so only the overlay program's log exists."""
+    r = Rig(tmp_path, mangoapp=True, cancel_window=10.0, record_seconds=0)
+    r.newest_by_dir = {r.log_dir: None, r.mangoapp_dir: r.mangoapp_log}
+    r.game = GameInfo(1942280, "Brotato")             # no pid: the log belongs to the overlay program, not to the game
+    r.running = {1942280}
+    return r
+
+
+def test_an_opengl_game_is_recorded_from_the_overlay_log(opengl):
+    opengl.chord(T0 + 20)
+    assert opengl.sounds == ["start"] and opengl.service.session.phase.value == "recording"
+    opengl.chord(T0 + 80)
+    assert opengl.statuses() == ["pending"]
+    opengl.service.tick(T0 + 91)
+    assert len(opengl.sent) == 1 and opengl.sent[0]["steam_app_id"] == 1942280 and opengl.sent[0]["game_name"] == "Brotato"
+    assert opengl.sent[0]["metrics"]["fps_avg"] == pytest.approx(60, abs=1)
+
+
+def test_a_vulkan_game_still_uses_its_own_log(tmp_path):
+    r = Rig(tmp_path, mangoapp=True, cancel_window=10.0, record_seconds=0)
+    r.newest_by_dir = {r.log_dir: r.log, r.mangoapp_log.parent: r.mangoapp_log}         # both exist: the game's own wins
+    cut_from = []
+    real_cut = r.service._cut
+    r.service._cut = lambda src, *a, **k: (cut_from.append(Path(src)), real_cut(src, *a, **k))[1]
+    r.chord(T0 + 20)
+    r.chord(T0 + 80)
+    assert cut_from == [r.log] and r.statuses() == ["pending"]
+
+
+def test_the_overlay_log_in_the_menu_is_not_a_game(opengl):
+    """Steam's menu is logged too: with no game running the chord must not start a recording of the menu."""
+    opengl.running = set()
+    opengl.game = None
+    opengl.chord(T0 + 20)
+    assert opengl.sounds == ["error"] and opengl.service.session.phase.value == "idle"
+    assert "no running game found" in opengl.said[-1]
+
+
+def test_two_running_games_are_not_guessed(opengl):
+    opengl.running = {1942280, 1245620}
+    opengl.game = None                                  # identify cannot tell
+    opengl.chord(T0 + 20)
+    assert opengl.sounds == ["error"] and "could not tell which game" in opengl.said[-1]
+
+
+def test_a_game_without_any_log_explains_itself(opengl):
+    """Desktop Mode / an old setup: a game runs but nothing writes data for it - say so, do not just beep."""
+    opengl.newest_by_dir = {opengl.log_dir: None, opengl.mangoapp_dir: None}
+    opengl.chord(T0 + 20)
+    assert opengl.sounds == ["error"] and opengl.service.session.phase.value == "idle"
+    assert "no performance data for this game" in opengl.said[-1] and "OpenGL" in opengl.said[-1] and "Game Mode" in opengl.said[-1]
+
+
+def test_no_game_and_no_log_still_says_start_a_game(opengl):
+    opengl.newest_by_dir = {opengl.log_dir: None, opengl.mangoapp_dir: None}
+    opengl.running = set()
+    opengl.chord(T0 + 20)
+    assert "no running game found - start a game first" in opengl.said[-1]
+
+
+def test_a_game_closed_during_the_recording_saves_nothing_from_the_menu_frames(opengl):
+    opengl.chord(T0 + 20)
+    opengl.running = set()                              # the game quit, Steam's menu is on screen (and in the log)
+    opengl.chord(T0 + 80)
+    assert opengl.statuses() == [] and opengl.sounds[-1] == "error" and "game was closed" in opengl.said[-1]
+
+
+def test_without_an_overlay_folder_nothing_changes(tmp_path):
+    r = Rig(tmp_path, cancel_window=10.0, record_seconds=0)           # older setups: no overlay log at all
+    r.newest = None
+    r.running = set()
+    r.chord(T0 + 20)
+    assert r.sounds == ["error"] and "no running game found" in r.said[-1]
+
+
+def test_a_huge_overlay_log_makes_the_overlay_program_start_a_new_one_when_idle(opengl, monkeypatch):
+    from linux_game_benchmark.deck import service as deck_service
+    monkeypatch.setattr(deck_service, "MANGOAPP_LOG_LIMIT", 1000)         # the fixture log is a few MB
+    opengl.service._tidy_mangoapp_logs()
+    assert opengl.restarts == [1]
+
+
+def test_the_overlay_program_is_left_alone_while_recording(opengl, monkeypatch):
+    from linux_game_benchmark.deck import service as deck_service
+    monkeypatch.setattr(deck_service, "MANGOAPP_LOG_LIMIT", 1000)
+    opengl.chord(T0 + 20)
+    opengl.service._tidy_mangoapp_logs()
+    assert opengl.restarts == []                                          # a restart would end the log under the recording
+
+
+def test_old_overlay_logs_go_but_the_running_one_stays(opengl):
+    old = write_log(opengl.mangoapp_dir, seconds=1, name="mangoapp_2026-10-10_08-00-00.csv")
+    import os
+    os.utime(old, (T0 - 10 * 86400, T0 - 10 * 86400))
+    opengl.service._tidy_mangoapp_logs()
+    assert not old.exists() and opengl.mangoapp_log.exists()
+

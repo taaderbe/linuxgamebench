@@ -6,6 +6,7 @@ All collaborators are injectable, so the whole flow (chord -> cut -> queue -> up
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 import traceback
 from dataclasses import dataclass
@@ -31,6 +32,13 @@ def _default_display(game: Optional[deck_game.GameInfo]) -> dict:
 
 
 DISPLAY_PROBE_INTERVAL = 20.0            # seconds between looks at the game's window while a recording runs
+MANGOAPP_LOG_LIMIT = 400 * 1024 * 1024   # the overlay program writes one log for the whole Game Mode session: start a new one beyond this
+MANGOAPP_UNIT = "gamescope-mangoapp.service"
+
+
+def _restart_mangoapp() -> None:
+    """Steam's overlay program starts a fresh log file when it restarts (SteamOS restarts it by itself on a session change)."""
+    subprocess.run(["systemctl", "--user", "restart", MANGOAPP_UNIT], capture_output=True, timeout=30)
 
 
 @dataclass
@@ -41,6 +49,7 @@ class Active:
     sampler: Optional[telemetry.Sampler] = None
     looks: Optional[list] = None             # what Gamescope said about the game's window, one entry per look
     last_look: float = 0.0
+    via_mangoapp: bool = False               # the log is the overlay program's (it sees every game) and not the game's own
 
 
 class DeckService:
@@ -65,11 +74,16 @@ class DeckService:
         read_env: Callable[[int], dict] = telemetry.read_process_env,
         read_software: Optional[Callable[[Optional[deck_game.GameInfo]], dict]] = None,
         read_display: Optional[Callable[[Optional[deck_game.GameInfo]], dict]] = None,
+        mangoapp_log_dir: Optional[Path] = None,
+        running_games: Callable[[], set] = deck_game.running_steam_games,
+        restart_mangoapp: Callable[[], None] = _restart_mangoapp,
     ):
         self.config = config
         self.deck = deck
         self.queue = queue
         self.log_dir = log_dir
+        self.mangoapp_log_dir = mangoapp_log_dir
+        self._running_games, self._restart_mangoapp = running_games, restart_mangoapp
         self.work_dir = work_dir
         self.play, self.say = play, say
         self._newest_log, self._identify, self._cut = newest_log, identify, cut
@@ -120,14 +134,44 @@ class DeckService:
                 self._pending_item = None
             self._message("upload cancelled (the recording stays on the Deck)", "cancel")
 
-    def _begin(self, now: float) -> None:
+    def _pick_log(self) -> tuple[Optional[Path], bool]:
+        """The log to cut from: the game's own MangoHud log when there is one (Vulkan / Proton games), otherwise the one
+        Steam's overlay program writes for whatever runs in Game Mode (OpenGL games, native titles). -> (log, via_mangoapp)"""
         log = self._newest_log(self.log_dir)
+        if log is not None:
+            return log, False
+        if self.mangoapp_log_dir is not None:
+            log = self._newest_log(self.mangoapp_log_dir)
+            if log is not None:
+                return log, True
+        return None, False
+
+    def _games_now(self) -> set:
+        try:
+            return set(self._running_games())
+        except Exception:
+            return set()
+
+    def _begin(self, now: float) -> None:
+        log, via_mangoapp = self._pick_log()
         start = segments.log_start_from_name(log) if log else None
         if log is None or start is None:
             self.session.reset()
-            self._message("no running game found - start a game first", "error")
+            if self._games_now():
+                # a game runs, but nothing writes performance data for it: say why, a beep alone leaves the player guessing
+                self._message("no performance data for this game - OpenGL games can only be recorded in Game Mode "
+                              "(after a new install, restart Steam first)", "error")
+            else:
+                self._message("no running game found - start a game first", "error")
             return
-        self._active = Active(log, start, self._identify(log), self._start_sampler(now), looks=[])
+        game = self._identify(log)
+        if via_mangoapp and game is None:
+            # the overlay program also logs Steam's own menus: without a running game there is nothing to record
+            self.session.reset()
+            self._message("no running game found - start a game first" if not self._games_now()
+                          else "could not tell which game is running - close the other ones", "error")
+            return
+        self._active = Active(log, start, game, self._start_sampler(now), looks=[], via_mangoapp=via_mangoapp)
         self._look(self._active, now)
         name = self._active.game.name if self._active.game else "unknown game"
         limit = f" - stops by itself after {self.config.record_seconds:.0f} s" if self.config.record_seconds else ""
@@ -178,10 +222,15 @@ class DeckService:
         if active is None:
             self.session.reset()
             return
-        newest = self._newest_log(self.log_dir)
+        newest, _ = self._pick_log()
         if newest is not None and newest != active.log:
             self.session.reset()
             self._message("the game was restarted during the recording - nothing saved", "error")
+            return
+        if active.via_mangoapp and active.game is not None and active.game.app_id not in self._games_now():
+            # the overlay log goes on after the game ends (Steam's menu): those frames are not the game
+            self.session.reset()
+            self._message("the game was closed during the recording - nothing saved", "error")
             return
         self._wait_flushed(active.log, segment.end, active.log_start)
         self.work_dir.mkdir(parents=True, exist_ok=True)
@@ -230,6 +279,7 @@ class DeckService:
             self._last_housekeeping = now
             self.queue.prune()
             deck_queue.prune_logs(self.log_dir, active=self._active.log if self._active else None)
+            self._tidy_mangoapp_logs()
         if self._active and self._active.sampler and self.session.phase.value == "recording":
             try:
                 self._active.sampler.sample(now)             # power source, TDP, brightness ... while it runs
@@ -238,6 +288,21 @@ class DeckService:
         if self._active and self.session.phase.value == "recording" and now - self._active.last_look >= DISPLAY_PROBE_INTERVAL:
             self._look(self._active, now)
         self._write_status(now)
+
+    def _tidy_mangoapp_logs(self) -> None:
+        """The overlay program logs the whole session into one file: drop old ones and start a new file when it gets huge."""
+        if self.mangoapp_log_dir is None:
+            return
+        running = self._newest_log(self.mangoapp_log_dir)             # being written right now: never deleted
+        keep = running if running is not None else (self._active.log if self._active else None)
+        deck_queue.prune_logs(self.mangoapp_log_dir, active=keep)
+        if running is None or self._active is not None:
+            return
+        try:
+            if running.stat().st_size > MANGOAPP_LOG_LIMIT:
+                self._restart_mangoapp()
+        except OSError:
+            pass
 
     def upload_item(self, item: deck_queue.Item, now: Optional[float] = None) -> bool:
         """Try to upload one queued recording. Returns True when it is online."""

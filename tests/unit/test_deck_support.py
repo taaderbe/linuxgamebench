@@ -298,3 +298,88 @@ def test_removing_the_setup_takes_the_dropin_away_too(fake_home, monkeypatch):
     assert deck_setup.mangoapp_dropin_path().exists()
     deck_setup.remove_all()
     assert not deck_setup.mangoapp_dropin_path().exists() and not deck_setup.env_file_path().exists()
+
+
+# ----- Game Mode: the overlay program (mangoapp) logs every game, also the OpenGL ones ----------------------------------
+
+class FakeSystemctl:
+    """Stands in for deck_setup._systemctl: returns canned text per command, records every call."""
+    def __init__(self, cat="", active="inactive", cat_ok=True):
+        self.calls, self.cat, self.active, self.cat_ok = [], cat, active, cat_ok
+
+    def __call__(self, *args):
+        from types import SimpleNamespace
+        self.calls.append(args)
+        if args[:1] == ("cat",):
+            return SimpleNamespace(stdout=self.cat, stderr="", returncode=0 if self.cat_ok else 1)
+        if args[:1] == ("is-active",):
+            return SimpleNamespace(stdout=self.active + "\n", stderr="", returncode=0)
+        return SimpleNamespace(stdout="", stderr="", returncode=0)
+
+
+VENDOR_UNIT = """# /usr/lib/systemd/user/gamescope-mangoapp.service
+[Service]
+ExecStart=/usr/bin/mangoapp --steam
+EnvironmentFile=%t/gamescope-environment
+
+# /home/deck/.config/systemd/user/gamescope-mangoapp.service.d/linuxgamebench.conf
+[Service]
+ExecStart=
+ExecStart=/usr/bin/env "MANGOHUD_CONFIG=x" /usr/bin/old-copy-of-ours
+"""
+
+
+def test_the_overlay_program_logs_with_its_own_variable_and_only_the_logging_switches(fake_home, tmp_path, monkeypatch):
+    monkeypatch.setattr(deck_setup, "_systemctl", FakeSystemctl())
+    path = deck_setup.write_mangoapp_dropin()
+    lines = path.read_text().splitlines()
+    out = tmp_path / "data/deck/mangoapp-logs"
+    assert "UnsetEnvironment=MANGOHUD_CONFIG" in lines                       # the long session value still never reaches it
+    assert lines.index("ExecStart=") < lines.index(
+        f'ExecStart=/usr/bin/env "MANGOHUD_CONFIG=output_folder={out},autostart_log=1,log_interval=0" /usr/bin/mangoapp')
+    assert out.is_dir()
+    assert not set(deck_setup.SENSORS) & set(deck_setup.mangoapp_env_options().split(",")), \
+        "a sensor list would show up on Steam's overlay"
+
+
+def test_the_overlay_command_is_taken_from_the_vendor_unit_not_from_our_own_drop_in(fake_home, monkeypatch):
+    monkeypatch.setattr(deck_setup, "_systemctl", FakeSystemctl(cat=VENDOR_UNIT))
+    assert deck_setup.vendor_mangoapp_command() == "/usr/bin/mangoapp --steam"
+    assert deck_setup.write_mangoapp_dropin().read_text().rstrip().endswith("/usr/bin/mangoapp --steam")
+
+
+@pytest.mark.parametrize("cat", [FakeSystemctl(cat_ok=False), FakeSystemctl(cat="no execstart here\n")])
+def test_without_a_readable_unit_the_default_command_is_used(fake_home, monkeypatch, cat):
+    monkeypatch.setattr(deck_setup, "_systemctl", cat)
+    assert deck_setup.vendor_mangoapp_command() == "/usr/bin/mangoapp"
+
+
+def test_a_missing_systemctl_does_not_break_the_setup(fake_home, monkeypatch):
+    def boom(*a):
+        raise FileNotFoundError("systemctl")
+    monkeypatch.setattr(deck_setup, "_systemctl", boom)
+    assert deck_setup.vendor_mangoapp_command() == "/usr/bin/mangoapp"
+    deck_setup.reload_mangoapp()                                               # must not raise
+
+
+def test_the_unit_quoting_survives_odd_paths():
+    assert deck_setup._unit_quote('a b"c%d$e\\f') == '"a b\\"c%%d$$e\\\\f"'
+
+
+@pytest.mark.parametrize("state, restarted", [("active", True), ("inactive", False), ("failed", False)])
+def test_the_overlay_program_is_restarted_only_when_it_runs(monkeypatch, state, restarted):
+    fake = FakeSystemctl(active=state)
+    monkeypatch.setattr(deck_setup, "_systemctl", fake)
+    deck_setup.reload_mangoapp()
+    assert ("daemon-reload",) in fake.calls
+    assert (("restart", deck_setup.MANGOAPP_UNIT) in fake.calls) is restarted
+
+
+def test_removing_the_setup_gives_the_overlay_program_back_to_steamos(fake_home, monkeypatch):
+    fake = FakeSystemctl(active="active")
+    monkeypatch.setattr(deck_setup, "_systemctl", fake)
+    deck_setup.write_env_file()
+    deck_setup.remove_all()
+    assert not deck_setup.mangoapp_dropin_path().exists()
+    assert ("restart", deck_setup.MANGOAPP_UNIT) in fake.calls               # it runs as SteamOS ships it again
+

@@ -52,11 +52,19 @@ position=top-right
 # Game Mode points MANGOHUD_CONFIGFILE at a file of its own (Steam's performance overlay, "no_display" by default), so
 # our config file is never read there. MANGOHUD_CONFIG (the same options as one variable) wins over that file.
 MANGOAPP_DROPIN = "gamescope-mangoapp.service.d/linuxgamebench.conf"
+MANGOAPP_UNIT = "gamescope-mangoapp.service"
+MANGOAPP_FALLBACK_COMMAND = "/usr/bin/mangoapp"
 
 
 def mangohud_env_options(out_dir: Optional[Path] = None) -> str:
     out_dir = out_dir or deck_config.log_dir()
     return ",".join([f"output_folder={out_dir}", "autostart_log=1", "log_interval=0", *SENSORS])
+
+
+def mangoapp_env_options(out_dir: Optional[Path] = None) -> str:
+    """Only the logging switches - no sensor list, so what Steam's overlay shows stays as the player set it."""
+    out_dir = out_dir or deck_config.mangoapp_log_dir()
+    return ",".join([f"output_folder={out_dir}", "autostart_log=1", "log_interval=0"])
 
 
 def home() -> Path:
@@ -110,12 +118,57 @@ def mangoapp_dropin_path() -> Path:
     return home() / ".config/systemd/user" / MANGOAPP_DROPIN
 
 
+def vendor_mangoapp_command() -> str:
+    """The command SteamOS starts the overlay with (read from the unit, so a changed path or argument is followed)."""
+    try:
+        result = _systemctl("cat", MANGOAPP_UNIT)
+        text = result.stdout if result is not None and result.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        text = ""
+    source = ""
+    for line in text.splitlines():
+        if line.startswith("# /"):
+            source = line[2:].strip()
+        elif line.startswith("ExecStart=") and ".service.d/" not in source:
+            command = line[len("ExecStart="):].strip().lstrip("-@:+!")
+            if command and "$" not in command and "%" not in command:
+                return command
+    return MANGOAPP_FALLBACK_COMMAND
+
+
+def _unit_quote(text: str) -> str:
+    """One argument of a systemd Exec line (specifiers and variables escaped, whole thing in double quotes)."""
+    return '"' + text.replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%").replace("$", "$$") + '"'
+
+
 def write_mangoapp_dropin() -> Path:
-    """Steam's own performance overlay (mangoapp) must not pick up our logging options: it would show all of them."""
+    """Steam's own performance overlay (mangoapp) writes the log of every game in Game Mode.
+
+    MangoHud's Vulkan layer cannot see OpenGL games (Brotato, Godot, many native titles), but Gamescope hands the frame data
+    of EVERY game to mangoapp. So mangoapp gets its own logging variable (the plain session value never reaches it, that is
+    what UnsetEnvironment is for); what it shows on screen stays exactly as the player set it in Steam."""
     path = mangoapp_dropin_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("# Written by Linux Game Bench: keeps Steam's performance overlay as it is\n[Service]\nUnsetEnvironment=MANGOHUD_CONFIG\n")
+    deck_config.mangoapp_log_dir().mkdir(parents=True, exist_ok=True)
+    command = vendor_mangoapp_command()
+    path.write_text(
+        "# Written by Linux Game Bench: this overlay program logs every game (also OpenGL) for the recorder; the overlay looks the same\n"
+        "[Service]\n"
+        "UnsetEnvironment=MANGOHUD_CONFIG\n"
+        "ExecStart=\n"
+        f"ExecStart=/usr/bin/env {_unit_quote('MANGOHUD_CONFIG=' + mangoapp_env_options())} {command}\n")
     return path
+
+
+def reload_mangoapp() -> None:
+    """Make a changed drop-in count now: reload systemd and restart the overlay program if it runs (Game Mode)."""
+    try:
+        _systemctl("daemon-reload")
+        result = _systemctl("is-active", MANGOAPP_UNIT)
+        if result is not None and (result.stdout or "").strip() == "active":
+            _systemctl("restart", MANGOAPP_UNIT)
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 LAUNCHER_NAME = "linuxgamebench-link.desktop"
@@ -195,7 +248,7 @@ def install_service(enable: bool = True, command: Optional[str] = None) -> tuple
     if not enable:
         return True, f"unit written to {path}"
     try:
-        _systemctl("daemon-reload")
+        reload_mangoapp()                                            # daemon-reload, and the overlay program picks up its drop-in
         result = _systemctl("enable", "--now", UNIT_NAME)
         if result.returncode != 0:
             return False, (result.stderr or result.stdout).strip() or "systemctl failed"
@@ -226,6 +279,7 @@ def remove_all() -> list[str]:
         if path.exists():
             path.unlink()
             done.append(str(path))
+    reload_mangoapp()                                                  # the overlay program runs as SteamOS ships it again
     conf = mangohud_conf_path()
     if conf.exists() and is_managed(conf):
         backups = sorted(conf.parent.glob(conf.name + ".lgb-backup-*"))
