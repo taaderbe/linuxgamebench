@@ -13,7 +13,7 @@ from typing import Optional
 from linux_game_benchmark.config.settings import settings
 from linux_game_benchmark.deck import config as deck_config
 from linux_game_benchmark.deck import setup as deck_setup
-from linux_game_benchmark.deck.chord import GamepadReader
+from linux_game_benchmark.deck.chord import VIEW_HINT, GamepadReader, button_label
 from linux_game_benchmark.deck.detect import detect_steam_deck
 from linux_game_benchmark.deck.queue import Queue
 
@@ -105,8 +105,11 @@ def collect(scan_controllers: bool = True) -> DeckOverview:
     return out
 
 
-def chord_words(chord: str, capital: bool = False) -> str:
-    """'LB+RB>VIEW' -> 'hold LB + RB, then press VIEW' (button names keep their case)."""
+def chord_words(chord: str, capital: bool = False, hint: bool = False) -> str:
+    """'LB+RB>VIEW' -> 'hold L1 + R1, then press VIEW' (the names the Deck prints on its buttons). With `hint` the VIEW button is
+    described, because it is the one people do not find: 'VIEW (the small button left of the screen with two overlapping squares)'."""
     held, _, pressed = chord.partition(">")
-    words = f"{'Hold' if capital else 'hold'} {' + '.join(p for p in held.split('+') if p)}, then press {pressed}"
-    return words
+    pressed_word = button_label(pressed)
+    if hint and pressed_word.upper() == "VIEW":
+        pressed_word = f"{pressed_word} ({VIEW_HINT})"
+    return f"{'Hold' if capital else 'hold'} {' + '.join(button_label(p) for p in held.split('+') if p)}, then press {pressed_word}"

@@ -14,10 +14,17 @@ from rich.console import Console
 
 from linux_game_benchmark.deck import config as deck_config
 from linux_game_benchmark.deck import setup as deck_setup
+from linux_game_benchmark.deck.overview import chord_words
 from linux_game_benchmark.deck.chord import (
-    ChordLearner, GamepadReader, format_chord, parse_chord,
+    ChordLearner, GamepadReader, chord_label, format_chord, parse_chord,
 )
 from linux_game_benchmark.deck.detect import detect_steam_deck
+
+def record_with_text(cfg: "deck_config.DeckConfig") -> str:
+    """The last lines of the setup: how to record, in the words printed on the Deck's buttons."""
+    return (f"Record with: [bold]{chord_words(cfg.chord, hint=True)}[/bold]. It records {cfg.record_seconds:.0f} s, "
+            f"stops by itself{' and uploads' if cfg.auto_upload else ''} (the same chord ends it earlier).")
+
 
 deck_app = typer.Typer(help="Steam Deck: record with a controller chord, upload automatically.", no_args_is_help=True)
 console = Console()
@@ -77,9 +84,7 @@ def setup(
         console.print("[green]✓[/green] no account: recordings upload anonymously")
         _link_later_hint()
 
-    console.print(f"\nRecord with: hold [bold]{cfg.chord.split('>')[0].replace('+', ' + ')}[/bold], "
-                  f"then press [bold]{cfg.chord.split('>')[1]}[/bold]. It records {cfg.record_seconds:.0f} s, "
-                  f"stops by itself{' and uploads' if cfg.auto_upload else ''} (the same chord ends it earlier).")
+    console.print("\n" + record_with_text(cfg))
     console.print("[bold]Now switch back to Game Mode - that is all.[/bold]")
 
 
@@ -229,7 +234,7 @@ def status() -> None:
     console.print(f"Device:      {deck.name if deck.is_deck else 'not a supported handheld'}"
                   f"{' (Game Mode)' if deck.game_mode else ''}")
     console.print(f"Service:     {deck_setup.service_state()}")
-    console.print(f"Chord:       {cfg.chord}   recording: {cfg.record_seconds:.0f} s   "
+    console.print(f"Chord:       {chord_label(cfg.chord)}   recording: {cfg.record_seconds:.0f} s   "
                   f"auto-upload: {'on' if cfg.auto_upload else 'off'}")
     session = get_current_session()
     console.print(f"Account:     {session.get_username() if session else 'none - uploads are anonymous (link: ' + deck_setup.app_command() + ' deck link)'}")
@@ -265,7 +270,7 @@ def status() -> None:
 
 @deck_app.command()
 def chord(
-    set_to: Optional[str] = typer.Option(None, "--set", help="e.g. LB+RB>VIEW (hold LB and RB, press VIEW)"),
+    set_to: Optional[str] = typer.Option(None, "--set", help="e.g. L1+R1>VIEW (hold L1 and R1, press VIEW)"),
     learn: bool = typer.Option(False, "--learn", help="Press and hold two buttons, then press a third"),
 ) -> None:
     """Show, set or learn the recording chord."""
@@ -294,11 +299,11 @@ def chord(
         except ValueError as exc:
             console.print(f"[red]{exc}[/red]")
             raise typer.Exit(1)
-        cfg.chord = set_to.upper()
+        cfg.chord = format_chord(parse_chord(set_to))
         cfg.save()
-        console.print(f"[green]Chord set to {cfg.chord}[/green] (restart the service: systemctl --user restart lgb-deck)")
+        console.print(f"[green]Chord set to {chord_label(cfg.chord)}[/green] (restart the service: systemctl --user restart lgb-deck)")
         return
-    console.print(f"Current chord: {cfg.chord}  (hold {cfg.chord.split('>')[0].replace('+', ' + ')}, press {cfg.chord.split('>')[1]})")
+    console.print(f"Current chord: {chord_label(cfg.chord)}  ({chord_words(cfg.chord, hint=True)})")
 
 
 @deck_app.command()

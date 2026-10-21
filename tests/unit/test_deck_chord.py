@@ -123,3 +123,38 @@ def test_raw_events_keep_only_key_events():
     data = ev(0, 0, 0) + ev(1, VIEW, 1) + ev(3, 0, 5) + ev(1, VIEW, 0)
     assert parse_events(data) == [(VIEW, 1), (VIEW, 0)]
     assert parse_events(data[:-5]) == [(VIEW, 1)]       # truncated last event is dropped
+
+
+# ----- the names on the Deck's buttons: L1 / R1 (the ids LB / RB stay in the config file) -------------------------------------
+
+def test_both_spellings_of_the_shoulder_buttons_are_the_same_chord():
+    from linux_game_benchmark.deck.chord import chord_label, button_label
+    assert parse_chord("L1+R1>VIEW") == parse_chord("LB+RB>VIEW") == parse_chord("lb+rb>view")
+    assert format_chord(parse_chord("L1+R1>VIEW")) == "LB+RB>VIEW", "what is stored stays the id every old setting uses"
+    assert button_label("LB") == "L1" and button_label("rb") == "R1" and button_label("VIEW") == "VIEW" and button_label("L4") == "L4"
+    assert chord_label("LB+RB>VIEW") == "L1 + R1 > VIEW" and chord_label("L1+R1>VIEW") == "L1 + R1 > VIEW"
+
+
+
+def test_the_chord_command_speaks_l1_and_r1_and_stores_the_id(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from linux_game_benchmark.deck import cli as deck_cli
+    from linux_game_benchmark.deck import config as deck_config
+    monkeypatch.setattr(deck_config, "config_path", lambda: tmp_path / "deck.json")
+    runner = CliRunner()
+    shown = " ".join(runner.invoke(deck_cli.deck_app, ["chord"]).output.split())
+    assert "L1 + R1 > VIEW" in shown and "hold L1 + R1, then press VIEW (the small button left of the screen" in shown
+    assert "LB" not in shown and "RB" not in shown
+    result = runner.invoke(deck_cli.deck_app, ["chord", "--set", "l1+r1>menu"])
+    assert result.exit_code == 0 and "L1 + R1 > MENU" in " ".join(result.output.split())
+    assert deck_config.DeckConfig.load(tmp_path / "deck.json").chord == "LB+RB>MENU", "the config keeps the ids"
+    assert runner.invoke(deck_cli.deck_app, ["chord", "--set", "L1+R1>L1"]).exit_code == 1, "three different buttons are still required"
+
+
+def test_the_setup_ends_with_the_buttons_as_the_deck_prints_them():
+    from linux_game_benchmark.deck import cli as deck_cli
+    from linux_game_benchmark.deck import config as deck_config
+    text = deck_cli.record_with_text(deck_config.DeckConfig())
+    assert "hold L1 + R1, then press VIEW (the small button left of the screen with two overlapping squares)" in text
+    assert "LB" not in text and "RB" not in text
+    assert "records 60 s, stops by itself and uploads" in text

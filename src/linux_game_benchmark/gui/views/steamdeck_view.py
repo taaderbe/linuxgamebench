@@ -636,7 +636,7 @@ class SteamDeckView(QWidget):
 
         self._how_text.setText(
             "1. Start a game (in Game Mode).\n"
-            f"2. {deck_overview.chord_words(state.chord, capital=True)}.\n"
+            f"2. {deck_overview.chord_words(state.chord, capital=True, hint=True)}.\n"
             f"3. Play. After {state.seconds:.0f} seconds the recording ends by itself"
             f"{' and uploads' if state.auto_upload else ''} - the same chord ends it earlier (at least 30 s).")
 

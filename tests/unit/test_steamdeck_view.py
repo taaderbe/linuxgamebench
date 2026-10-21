@@ -68,7 +68,7 @@ def test_a_ready_deck_shows_model_chord_account_and_recordings(app, monkeypatch)
     text = labels(make_view(monkeypatch, state))
     assert "Steam Deck LCD  (SteamOS 3.8.28)" in text and "Ready - waiting for the chord" in text
     assert "Linked as tom" in text and "controller found (1)" in text
-    assert "2. Hold LB + RB, then press VIEW." in text and "After 60 seconds the recording ends by itself and uploads" in text
+    assert "2. Hold L1 + R1, then press VIEW (the small button left of the screen with two overlapping squares)." in text and "After 60 seconds the recording ends by itself and uploads" in text
     assert "Elden Ring  -  60 s  -  uploaded" in text and "Hades  -  60 s  -  failed  (offline)" in text
     assert "cancel" not in text.lower(), "the old 'unless you cancel it' wording must be gone"
 

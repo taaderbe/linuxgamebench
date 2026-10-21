@@ -61,8 +61,16 @@ def test_site_url_drops_the_api_prefix(monkeypatch):
 
 
 def test_chord_in_words():
-    assert overview.chord_words("LB+RB>VIEW") == "hold LB + RB, then press VIEW"
+    """People read the names on the Deck's buttons: L1 / R1 (the config keeps the ids LB / RB)."""
+    assert overview.chord_words("LB+RB>VIEW") == "hold L1 + R1, then press VIEW"
     assert overview.chord_words("L4+R4>A") == "hold L4 + R4, then press A"
+    assert overview.chord_words("LB+RB>VIEW", capital=True).startswith("Hold L1 + R1")
+
+
+def test_the_view_button_is_described_where_people_look_for_it():
+    words = overview.chord_words("LB+RB>VIEW", hint=True)
+    assert words == "hold L1 + R1, then press VIEW (the small button left of the screen with two overlapping squares)"
+    assert overview.chord_words("LB+RB>MENU", hint=True) == "hold L1 + R1, then press MENU", "only VIEW needs the description"
 
 
 def test_the_device_name_is_the_full_model_name(home, monkeypatch):

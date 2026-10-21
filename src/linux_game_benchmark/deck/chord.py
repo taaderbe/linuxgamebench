@@ -29,6 +29,24 @@ BUTTONS: dict[str, int] = {
 _NAMES = {code: name for name, code in BUTTONS.items()}
 BTN_GAMEPAD = 0x130
 
+# What the Deck itself prints on the buttons: the shoulder buttons are L1 / R1 (the Xbox names LB / RB stay the ids in the config
+# file, so every setting that exists keeps working; both spellings are accepted when typing a chord).
+ALIASES = {"L1": "LB", "R1": "RB"}
+LABELS = {"LB": "L1", "RB": "R1"}
+VIEW_HINT = "the small button left of the screen with two overlapping squares"
+
+
+def button_label(name: str) -> str:
+    """The name of a button as a person finds it on the Deck ('LB' -> 'L1')."""
+    name = name.strip()
+    return LABELS.get(name.upper(), name)
+
+
+def chord_label(chord: str) -> str:
+    """'LB+RB>VIEW' -> 'L1 + R1 > VIEW' (for output; the config keeps the id)."""
+    held, _, pressed = chord.partition(">")
+    return f"{' + '.join(button_label(p) for p in held.split('+') if p.strip())} > {button_label(pressed)}"
+
 
 @dataclass(frozen=True)
 class Chord:
@@ -44,7 +62,7 @@ def button_name(code: int) -> str:
 
 
 def button_code(name: str) -> int:
-    key = name.strip().upper()
+    key = ALIASES.get(name.strip().upper(), name.strip().upper())
     if key in BUTTONS:
         return BUTTONS[key]
     try:
@@ -61,7 +79,7 @@ def parse_chord(text: str) -> Chord:
     held, sep, pressed = text.partition(">")
     names = [part for part in held.split("+") if part.strip()]
     if not sep or len(names) != 2 or not pressed.strip():
-        raise ValueError("chord format is HOLD1+HOLD2>PRESS, e.g. LB+RB>VIEW")
+        raise ValueError("chord format is HOLD1+HOLD2>PRESS, e.g. L1+R1>VIEW")
     hold = (button_code(names[0]), button_code(names[1]))
     press = button_code(pressed)
     if len({hold[0], hold[1], press}) != 3:
