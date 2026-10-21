@@ -137,6 +137,16 @@ def test_skipping_the_link_during_setup_still_finishes_and_says_how_to_link_late
     assert "Now switch back to Game Mode" in flat(result)
 
 
+def test_setup_ends_with_the_hint_for_a_controller_that_does_not_react_after_the_switch(deck_env):
+    """After the switch back to Game Mode SteamOS sometimes leaves the controls dead until the Steam button is pressed (also on a
+    Deck without Linux Game Bench); the installer's last words say so, so nobody blames the recorder."""
+    result = runner.invoke(deck_cli.deck_app, ["setup", "--yes", "--anonymous"])
+    assert result.exit_code == 0, flat(result)
+    out = flat(result)
+    assert "press the Steam button once" in out and "SteamOS, not Linux Game Bench" in out
+    assert out.index("Now switch back to Game Mode") < out.index("press the Steam button once")
+
+
 def test_setup_puts_a_link_entry_into_the_application_menu(deck_env, tmp_path):
     runner.invoke(deck_cli.deck_app, ["setup", "--yes", "--anonymous"])
     launcher = tmp_path / "home/.local/share/applications/linuxgamebench-link.desktop"
