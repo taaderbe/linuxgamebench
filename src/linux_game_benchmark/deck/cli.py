@@ -35,10 +35,14 @@ def setup(
     """One-time setup (safe to run again): recorder, background service, sounds, account link."""
     deck = detect_steam_deck()
     if deck.is_deck:
-        console.print(f"[green]Steam Deck {deck.model} detected[/green]"
+        console.print(f"[green]{deck.name} detected[/green]"
                       f"{' (SteamOS ' + deck.steamos_version + ')' if deck.steamos_version else ''}")
+        if deck.handheld:
+            console.print("[dim]Only the Steam Deck is verified on real hardware - on this handheld some values may be missing "
+                          "and the controller chord may differ. Please tell us what you find.[/dim]")
     elif not force:
-        console.print("[yellow]This does not look like a Steam Deck. Use --force to set it up anyway.[/yellow]")
+        console.print("[yellow]This does not look like a Steam Deck or another supported handheld "
+                      "(ROG Ally, Legion Go, MSI Claw, AYANEO, GPD, ONEXPLAYER). Use --force to set it up anyway.[/yellow]")
         raise typer.Exit(1)
 
     cfg = deck_config.DeckConfig.load()
@@ -196,7 +200,7 @@ def status() -> None:
 
     deck = detect_steam_deck()
     cfg = deck_config.DeckConfig.load()
-    console.print(f"Device:      {'Steam Deck ' + deck.model if deck.is_deck else 'not a Steam Deck'}"
+    console.print(f"Device:      {deck.name if deck.is_deck else 'not a supported handheld'}"
                   f"{' (Game Mode)' if deck.game_mode else ''}")
     console.print(f"Service:     {deck_setup.service_state()}")
     console.print(f"Chord:       {cfg.chord}   recording: {cfg.record_seconds:.0f} s   "

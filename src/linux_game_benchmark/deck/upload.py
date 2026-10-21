@@ -20,14 +20,19 @@ class Prepared:
     summary: dict            # fps_avg, seconds, frames - for the log line / sound decision
 
 
-def deck_hardware_names(deck: DeckInfo) -> tuple[str, str]:
-    """The Deck is one piece of hardware: name it as such instead of 'AMD Custom GPU 0405'."""
+def deck_hardware_names(deck: DeckInfo, system_info: Optional[dict] = None) -> tuple[str, str]:
+    """The Deck is one piece of hardware: name it as such instead of 'AMD Custom GPU 0405'.
+
+    Another handheld has no such fixed name here (the server names the models it knows): it sends what the system reports."""
+    if deck.handheld:
+        info = system_info or {}
+        return (str(info.get("gpu", {}).get("model") or deck.handheld_label), str(info.get("cpu", {}).get("model") or deck.handheld_label))
     return (f"Steam Deck {deck.model}".strip(), "Steam Deck APU")
 
 
 def flatten_system(system_info: dict, deck: DeckInfo, proton: Optional[dict] = None) -> dict:
     from linux_game_benchmark.utils.formatting import short_kernel, short_os
-    gpu, cpu = deck_hardware_names(deck)
+    gpu, cpu = deck_hardware_names(deck, system_info)
     gpu_info = system_info.get("gpu", {})
     os_info = system_info.get("os", {})
     flat = {
@@ -42,6 +47,9 @@ def flatten_system(system_info: dict, deck: DeckInfo, proton: Optional[dict] = N
         "gpu_device_id": gpu_info.get("device_id"),
         "gpu_lspci_raw": gpu_info.get("lspci_raw"),
         "device_class": deck.device_class,
+        "device_vendor": deck.vendor or None,
+        "device_product": deck.product or None,
+        "device_version": deck.version or None,
     }
     if proton:
         flat.update(proton)

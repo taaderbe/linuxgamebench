@@ -8,6 +8,7 @@ import pytest
 from linux_game_benchmark.deck import config as deck_config
 from linux_game_benchmark.deck import overview
 from linux_game_benchmark.deck import setup as deck_setup
+from linux_game_benchmark.deck.detect import DeckInfo
 from linux_game_benchmark.deck.queue import Queue
 
 
@@ -16,14 +17,12 @@ def home(monkeypatch, tmp_path):
     monkeypatch.setenv("LGB_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setattr(deck_setup, "home", lambda: tmp_path)
     monkeypatch.setattr(deck_setup, "service_state", lambda: "active")
-    monkeypatch.setattr(overview, "detect_steam_deck", lambda: _Deck())
+    monkeypatch.setattr(overview, "detect_steam_deck", lambda: DeckInfo(is_deck=True, model="LCD", steamos_version="3.8.28", game_mode=False))
     monkeypatch.setattr(deck_config, "config_path", lambda: tmp_path / "deck.json")
     monkeypatch.setattr(overview.GamepadReader, "rescan", lambda self: ["/dev/input/event10"])
     return tmp_path
 
 
-class _Deck:
-    is_deck, model, steamos_version, game_mode = True, "LCD", "3.8.28", False
 
 
 def test_a_fresh_deck_is_not_ready_and_says_so(home):
@@ -64,3 +63,11 @@ def test_site_url_drops_the_api_prefix(monkeypatch):
 def test_chord_in_words():
     assert overview.chord_words("LB+RB>VIEW") == "hold LB + RB, then press VIEW"
     assert overview.chord_words("L4+R4>A") == "hold L4 + R4, then press A"
+
+
+def test_the_device_name_is_the_full_model_name(home, monkeypatch):
+    assert overview.collect(scan_controllers=False).device_name == "Steam Deck LCD"
+    ally = DeckInfo(is_deck=True, handheld="rog_ally", handheld_label="ROG Ally", steamos_version="")
+    monkeypatch.setattr(overview, "detect_steam_deck", lambda: ally)
+    state = overview.collect(scan_controllers=False)
+    assert state.is_deck and state.device_name == "ROG Ally" and state.model == ""

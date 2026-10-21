@@ -599,12 +599,12 @@ class SteamDeckView(QWidget):
         self._state = state
 
         if state.is_deck:
-            line = f"Steam Deck {state.model}".strip() + (f"  (SteamOS {state.steamos})" if state.steamos else "")
+            line = (state.device_name or f"Steam Deck {state.model}".strip()) + (f"  (SteamOS {state.steamos})" if state.steamos else "")
             self._device_line.setText(line + (" - Game Mode" if state.game_mode else ""))
             _style(self._device_line, SUCCESS, 16, True)
-            self._device_hint.setText("Deck runs are tagged automatically and kept apart from desktop PCs on the website.")
+            self._device_hint.setText("Handheld runs are tagged automatically and kept apart from desktop PCs on the website.")
         else:
-            self._device_line.setText("This computer is not a Steam Deck")
+            self._device_line.setText("This computer is not a Steam Deck or another supported handheld")
             _style(self._device_line, WARNING, 16, True)
             self._device_hint.setText("The recorder is made for the Deck. To set up a Deck, run this line in a terminal in its Desktop Mode:")
             self._install_line.setText(self._install_command())

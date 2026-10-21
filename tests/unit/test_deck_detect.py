@@ -3,11 +3,15 @@
 from linux_game_benchmark.deck.detect import DeckInfo, detect_steam_deck
 
 
-def _tree(tmp_path, product=None, board=None, cpu=None, pci=None, os_release=None, procs=()):
+def _tree(tmp_path, product=None, board=None, cpu=None, pci=None, os_release=None, procs=(), vendor=None, version=None):
     dmi = tmp_path / "sys/devices/virtual/dmi/id"
     dmi.mkdir(parents=True)
     if product is not None:
         (dmi / "product_name").write_text(product + "\n")
+    if vendor is not None:
+        (dmi / "sys_vendor").write_text(vendor + "\n")
+    if version is not None:
+        (dmi / "product_version").write_text(version + "\n")
     if board is not None:
         (dmi / "board_name").write_text(board + "\n")
     (tmp_path / "proc").mkdir()

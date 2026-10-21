@@ -40,6 +40,7 @@ class Recording:
 class DeckOverview:
     is_deck: bool = False
     model: str = ""                  # "LCD", "OLED" or ""
+    device_name: str = ""            # "Steam Deck LCD", "ROG Ally" ... (empty when this is no handheld)
     steamos: str = ""
     game_mode: bool = False
     configured: bool = False         # MangoHud config + environment written
@@ -75,7 +76,7 @@ def collect(scan_controllers: bool = True) -> DeckOverview:
     deck = detect_steam_deck()
     cfg = deck_config.DeckConfig.load()
     out = DeckOverview(
-        is_deck=deck.is_deck, model=deck.model, steamos=deck.steamos_version, game_mode=deck.game_mode,
+        is_deck=deck.is_deck, model=deck.model, device_name=deck.name, steamos=deck.steamos_version, game_mode=deck.game_mode,
         configured=deck_setup.is_managed(deck_setup.mangohud_conf_path()) and deck_setup.env_file_path().exists(),
         service=deck_setup.service_state(), chord=cfg.chord, seconds=cfg.record_seconds, auto_upload=cfg.auto_upload,
         site=site_url(),

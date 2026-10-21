@@ -6,6 +6,7 @@ import pty
 import pytest
 from typer.testing import CliRunner
 
+from linux_game_benchmark.deck.detect import DeckInfo
 from linux_game_benchmark.deck import cli as deck_cli
 from linux_game_benchmark.deck import pairing
 from linux_game_benchmark.deck import setup as deck_setup
@@ -101,7 +102,7 @@ def deck_env(monkeypatch, tmp_path):
     monkeypatch.setenv("APPIMAGE", "/home/deck/Applications/LinuxGameBench.AppImage")
     monkeypatch.delenv("LGB_ANON", raising=False)
     monkeypatch.setattr(deck_setup, "install_service", lambda **k: (True, "service enabled and started"))
-    monkeypatch.setattr(deck_cli, "detect_steam_deck", lambda: type("D", (), {"is_deck": True, "model": "LCD", "steamos_version": "3.8", "game_mode": False})())
+    monkeypatch.setattr(deck_cli, "detect_steam_deck", lambda: DeckInfo(is_deck=True, model="LCD", steamos_version="3.8", game_mode=False))
     calls = {"pair": 0}
 
     def pair(allow_skip=False):
