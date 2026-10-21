@@ -146,17 +146,18 @@ def probe(pid: Optional[int], app_id: Optional[int], run: Runner = run_tool,
             break
 
     size = None
-    if control:
-        focused_game = control.get("GAMESCOPE_FOCUSED_APP")
-        if app_id and focused_game not in (None, app_id):
-            return {}                                       # Steam shows something else (menu, another app): not our game
+    focused_game = control.get("GAMESCOPE_FOCUSED_APP") if control else None
+    in_front = bool(control) and (not app_id or focused_game in (None, app_id))
+    if in_front:
+        # the settings Steam writes belong to the app that is in front - only trust them while that is our game
         result.update(settings_from(control))
         window = control.get("GAMESCOPE_FOCUSED_WINDOW")
         if window and on:
             size = parse_window(run(["xwininfo", "-display", on, "-id", hex(window)]))
 
     if not plausible(size) and on and app_id:
-        # no Game Mode focus information: the largest top-level window of the game's own class
+        # the game's own window: the largest top-level window of its class (also when a menu is in front for a moment -
+        # the size the game renders at does not depend on who has the focus)
         wanted = f"steam_app_{app_id}"
         windows = [(w, h) for _, cls, w, h in parse_tree(run(["xwininfo", "-display", on, "-root", "-tree"])) if cls == wanted]
         size = max(windows, key=lambda s: s[0] * s[1], default=None)

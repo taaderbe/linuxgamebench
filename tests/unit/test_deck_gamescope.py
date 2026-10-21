@@ -112,9 +112,17 @@ def test_unknown_numbers_are_left_out():
     assert gamescope.settings_from({"GAMESCOPE_NEW_SCALING_FILTER": 9, "GAMESCOPE_NEW_SCALING_SCALER": 7, "GAMESCOPE_FPS_LIMIT": 5000}) == {}
 
 
-def test_another_app_in_front_means_nothing_is_reported():
-    control = CONTROL.replace("FOCUSED_APP(CARDINAL) = 1672970", "FOCUSED_APP(CARDINAL) = 769")        # the Steam menu
-    assert probe(control=control) == {}
+def test_another_app_in_front_gives_the_games_size_but_not_the_settings_of_that_other_app():
+    control = CONTROL.replace("FOCUSED_APP(CARDINAL) = 1672970", "FOCUSED_APP(CARDINAL) = 769")        # the Steam menu is in front
+    seen = probe(control=control)
+    assert seen == {"render_mode": "1280x720"}, "the frame limit and scaling shown now are those of Steam's own screen"
+
+
+def test_the_focused_window_of_another_app_is_not_used_for_the_size():
+    control = CONTROL.replace("FOCUSED_APP(CARDINAL) = 1672970", "FOCUSED_APP(CARDINAL) = 769")
+    calls = []
+    probe(control=control, calls=calls)
+    assert not any(c[0] == "xwininfo" and "-id" in c for c in calls), "asked for the focused window although it is not the game's"
 
 
 def test_without_gamescope_the_games_own_window_is_found_by_its_class():
