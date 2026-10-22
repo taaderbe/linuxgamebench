@@ -58,6 +58,7 @@ class Active:
     on_demand: bool = False                  # a log the overlay program wrote for this recording only (Game Mode)
     last_focus: float = 0.0                  # overlay recordings: when the front app was last looked at
     away: float = 0.0                        # ... how long something else than the game was in front so far
+    shader_mb: Optional[float] = None        # the game's shader cache when the recording started
     away_since: Optional[float] = None
 
 
@@ -83,6 +84,7 @@ class DeckService:
         read_env: Callable[[int], dict] = telemetry.read_process_env,
         read_software: Optional[Callable[[Optional[deck_game.GameInfo]], dict]] = None,
         read_display: Optional[Callable[[Optional[deck_game.GameInfo]], dict]] = None,
+        read_shader_cache: Callable[[int], Optional[float]] = telemetry.shader_cache_mb,
         mangoapp_log_dir: Optional[Path] = None,
         mangoapp_intake_dir: Optional[Path] = None,
         overlay_open_log: Callable[[set], Optional[Path]] = deck_mangoapp.open_log,
@@ -118,6 +120,7 @@ class DeckService:
         self._sampler_factory, self._read_env = sampler_factory, read_env
         self._read_software = read_software or _default_software
         self._read_display = read_display or _default_display
+        self._read_shader_cache = read_shader_cache
         self.tracker = ChordTracker(parse_chord(config.chord))
         self.session = RecordingSession(config.min_seconds, config.cancel_window, config.auto_upload, config.record_seconds)
         self._active: Optional[Active] = None
@@ -190,6 +193,7 @@ class DeckService:
                 self._message("no running game found - start a game first", "error")
             return
         self._active = Active(log, start, self._identify(log), self._start_sampler(now), looks=[])
+        self._active.shader_mb = self._shader_mb(self._active.game)
         self._announce(self._active, now)
 
     def _begin_overlay(self, now: float) -> None:
@@ -220,6 +224,7 @@ class DeckService:
             self._refuse("Steam's overlay program did not start a log - run 'lgb deck setup' once and try again")
             return
         self._active = Active(log, now, game, self._start_sampler(now), looks=[], on_demand=True, last_focus=now)
+        self._active.shader_mb = self._shader_mb(game)
         self._announce(self._active, now)
 
     def _refuse(self, text: str) -> None:
@@ -392,6 +397,12 @@ class DeckService:
         if seen and active.looks is not None:
             active.looks.append(seen)
 
+    def _shader_mb(self, game: Optional[deck_game.GameInfo]) -> Optional[float]:
+        try:
+            return self._read_shader_cache(game.app_id) if game else None
+        except Exception:                        # a bonus, never a reason to lose a recording
+            return None
+
     def _start_sampler(self, now: float) -> Optional[telemetry.Sampler]:
         try:
             sampler = self._sampler_factory()
@@ -418,6 +429,11 @@ class DeckService:
             software = self._read_software(active.game)
         except Exception:                        # the versions are a bonus on top of a bonus
             software = {}
+        if active.shader_mb is not None:         # shaders built while playing stutter: how big the cache was, how much it grew
+            software = {**software, "shader_cache_mb": active.shader_mb}
+            end = self._shader_mb(active.game)
+            if end is not None:
+                software["shader_cache_grew_mb"] = round(max(end - active.shader_mb, 0.0), 1)
         return {**state, "software": software} if software else state
 
     def _finish(self, segment: Segment, now: float, auto: bool = False) -> None:

@@ -1,6 +1,7 @@
 """What the Deck reports about itself: power source, battery, TDP, display, versions - read from a fake /sys tree."""
 
 import json
+import struct
 from pathlib import Path
 
 import pytest
@@ -276,11 +277,21 @@ def test_a_long_recording_stays_small_and_keeps_its_shape(tmp_path):
 
 
 def test_without_any_sensor_the_state_has_no_sensors_section(tmp_path):
-    build_deck(tmp_path)
+    put(tmp_path, "etc/os-release", 'NAME="SteamOS"\n')                   # a machine with none of the files
     sampler = telemetry.Sampler(tmp_path)
     sampler.start(0.0)
     sampler.sample(2.0)
     assert "sensors" not in sampler.finish(4.0)
+
+
+def test_a_deck_without_apu_sensors_still_records_the_battery_draw(tmp_path):
+    build_deck(tmp_path)                                                    # battery only: discharging at 12.5 W
+    sampler = telemetry.Sampler(tmp_path)
+    sampler.start(0.0)
+    sampler.sample(2.0)
+    sensors = sampler.finish(4.0)["sensors"]
+    assert set(sensors["series"]) == {"battery_power_w"} and sensors["series"]["battery_power_w"][0] == 12.5
+    assert "gpu_load_avg_pct" not in sensors and "gpu_load_source" not in sensors
 
 
 def test_a_sensor_reader_that_fails_never_costs_the_recording(tmp_path):
@@ -518,3 +529,190 @@ def test_waiting_for_the_disk_counts_as_idle(tmp_path):
     load.read()
     put(tmp_path, "proc/stat", "cpu 30 0 0 20 50 0 0 0 0 0\ncpu0 30 0 0 20 50 0 0 0 0 0\n")      # user 30, idle 20, iowait 50
     assert load.read()["cpu_load_pct"] == 30.0, "iowait is time the core had nothing to run"
+
+
+
+# ----- Build 32: the APU's metrics table, memory, battery, waiting for the disk, shader cache ---------------------------------
+
+def metrics_table(*, fmt=2, content=4, gfx_activity=63, cpu_mw=2150, gfx_mw=4800, avg_gfxclk=1180, core_temps=(6125, 6400, 5990, 6010),
+                  core_clocks=(2800, 2400, 2420, 1600), indep=0, size=168):
+    """gpu_metrics v2.x as the kernel lays it out (Van Gogh: 4 cores, the other 4 slots 0xFFFF)."""
+    data = bytearray(size)
+    struct.pack_into("<HBB", data, 0, size, fmt, content)
+    struct.pack_into("<HH", data, 4, 5600, 5550)
+    struct.pack_into("<8H", data, 8, *(list(core_temps) + [0xFFFF] * (8 - len(core_temps))))
+    struct.pack_into("<HH", data, 28, gfx_activity, 0)
+    struct.pack_into("<4H", data, 40, 7300, cpu_mw, 520, gfx_mw)
+    struct.pack_into("<6H", data, 64, avg_gfxclk, 447, 687, 687, 600, 400)
+    struct.pack_into("<6H", data, 76, 1600, 600, 687, 687, 600, 400)
+    struct.pack_into("<8H", data, 88, *(list(core_clocks) + [0xFFFF] * (8 - len(core_clocks))))
+    if size >= 128:
+        struct.pack_into("<Q", data, 120, indep)
+    return bytes(data)
+
+
+def test_the_metrics_table_gives_smooth_load_power_split_and_cpu_values():
+    got = telemetry.parse_gpu_metrics(metrics_table())
+    assert got == {"gpu_load_pct": 63.0, "gpu_clock_mhz": 1180, "cpu_power_w": 2.15, "gpu_power_w": 4.8,
+                   "cpu_temp_c": 64.0, "cpu_clock_mhz": 2305, "throttle": 0}
+
+
+@pytest.mark.parametrize("bits,expected", [((0,), 1), ((5,), 1), ((17,), 1), ((32,), 2), ((33,), 2), ((56,), 2), ((4, 35), 3), ((8,), 0)])
+def test_throttling_is_told_apart_power_limit_or_heat(bits, expected):
+    assert telemetry.parse_gpu_metrics(metrics_table(indep=sum(1 << b for b in bits)))["throttle"] == expected
+
+
+def test_an_old_table_without_the_independent_flags_has_no_throttle_value():
+    assert "throttle" not in telemetry.parse_gpu_metrics(metrics_table(content=1, size=120))
+
+
+@pytest.mark.parametrize("table", [metrics_table(fmt=1), metrics_table(fmt=3), metrics_table()[:100], b""])
+def test_another_format_or_a_short_table_gives_nothing(table):
+    assert telemetry.parse_gpu_metrics(table) == {}
+
+
+def test_missing_values_in_the_table_are_left_out():
+    got = telemetry.parse_gpu_metrics(metrics_table(gfx_activity=0xFFFF, cpu_mw=0xFFFF, avg_gfxclk=0xFFFF, core_temps=(), core_clocks=()))
+    assert got == {"gpu_power_w": 4.8, "throttle": 0}
+
+
+def test_with_the_table_the_load_and_clock_come_from_it(tmp_path):
+    add_sensors(build_deck(tmp_path))                                       # momentary: 87 %, 1100 MHz
+    (tmp_path / "sys/class/drm/card0/device/gpu_metrics").write_bytes(metrics_table(indep=1 << 33))
+    got = telemetry.read_sensors(tmp_path)
+    assert got["gpu_load_pct"] == 63.0 and got["gpu_load_source"] == "metrics" and got["gpu_clock_mhz"] == 1180
+    assert got["cpu_power_w"] == 2.15 and got["gpu_power_w"] == 4.8 and got["cpu_temp_c"] == 64.0 and got["throttle"] == 2
+    assert got["apu_temp_c"] == 61.0 and got["apu_power_w"] == 12.3, "the hwmon readings stay"
+
+
+def test_a_broken_table_falls_back_to_the_momentary_readings(tmp_path):
+    add_sensors(build_deck(tmp_path))
+    (tmp_path / "sys/class/drm/card0/device/gpu_metrics").write_bytes(b"\x00" * 40)
+    got = telemetry.read_sensors(tmp_path)
+    assert got["gpu_load_pct"] == 87.0 and "gpu_load_source" not in got and got["gpu_clock_mhz"] == 1100
+
+
+def test_memory_in_use_and_what_the_gpu_holds(tmp_path):
+    build_deck(tmp_path)
+    put(tmp_path, "proc/meminfo", "MemTotal:       15700000 kB\nMemFree:  100 kB\nMemAvailable:    9408576 kB\nSwapTotal: 0 kB\n")
+    put(tmp_path, "sys/class/drm/card0/device/mem_info_vram_used", 900 * 1024 * 1024)
+    put(tmp_path, "sys/class/drm/card0/device/mem_info_gtt_used", 300 * 1024 * 1024)
+    assert telemetry.read_memory(tmp_path) == {"ram_used_gb": 6.0, "gpu_mem_mb": 1200}
+
+
+def test_without_memavailable_there_is_no_ram_value(tmp_path):
+    build_deck(tmp_path)                                                    # MemTotal only
+    assert "ram_used_gb" not in telemetry.read_memory(tmp_path)
+
+
+def test_the_battery_draw_only_while_discharging_and_the_temperature_from_the_decks_hwmon(tmp_path):
+    build_deck(tmp_path, power_w=11.2)
+    put(tmp_path, "sys/class/hwmon/hwmon4/name", "steamdeck_hwmon")
+    put(tmp_path, "sys/class/hwmon/hwmon4/temp1_label", "Battery Temp")
+    put(tmp_path, "sys/class/hwmon/hwmon4/temp1_input", 34500)
+    assert telemetry.read_battery_now(tmp_path) == {"battery_power_w": 11.2, "battery_temp_c": 34.5}
+    put(tmp_path, "sys/class/power_supply/BAT1/status", "Charging")
+    assert telemetry.read_battery_now(tmp_path) == {"battery_temp_c": 34.5}, "plugged in, power_now is the charge current"
+
+
+def test_the_battery_temperature_falls_back_to_the_hwmon_in_the_power_section(tmp_path):
+    build_deck(tmp_path)
+    (tmp_path / "sys/class/power_supply/BAT1/temp").unlink()               # the real Deck's battery has no temp file
+    put(tmp_path, "sys/class/hwmon/hwmon4/name", "steamdeck_hwmon")
+    put(tmp_path, "sys/class/hwmon/hwmon4/temp1_label", "Battery Temp")
+    put(tmp_path, "sys/class/hwmon/hwmon4/temp1_input", 35000)
+    assert telemetry.read_power(tmp_path)["battery_temp_c"] == 35.0
+
+
+class Ticks:
+    def __init__(self):
+        self.t = 100.0
+
+    def __call__(self):
+        return self.t
+
+
+def io_files(root, io_us, mem_us, nvme_sectors, sd_sectors=0):
+    put(root, "proc/pressure/io", f"some avg10=0.00 avg60=0.00 avg300=0.00 total={io_us}\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0")
+    put(root, "proc/pressure/memory", f"some avg10=0.00 avg60=0.00 avg300=0.00 total={mem_us}\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0")
+    put(root, "proc/diskstats", "\n".join([
+        f" 259       0 nvme0n1 100 0 {nvme_sectors} 0 0 0 0 0 0 0 0",
+        f" 259       8 nvme0n1p8 100 0 {nvme_sectors} 0 0 0 0 0 0 0 0",          # a partition: already in the disk's count
+        f" 179       0 mmcblk0 10 0 {sd_sectors} 0 0 0 0 0 0 0 0",
+        " 252       0 zram0 10 0 999999 0 0 0 0 0 0 0 0",                       # compressed RAM, not a disk
+    ]))
+
+
+def test_waiting_for_the_disk_and_what_was_read_since_the_previous_reading(tmp_path):
+    clock = Ticks()
+    io = telemetry.IoLoad(tmp_path, clock=clock)
+    io_files(tmp_path, 1_000_000, 50_000, 2_000_000, 1000)
+    assert io.read() == {}, "the first reading only sets the start point"
+    clock.t += 2.0
+    io_files(tmp_path, 1_400_000, 50_000, 2_000_000 + 409_600, 1000 + 4096)  # 0.4 s of 2 s waited; 200 MiB + 2 MiB read
+    got = io.read()
+    assert got["io_stall_pct"] == 20.0 and got["mem_stall_pct"] == 0.0
+    assert got["disk_read_mb"] == pytest.approx((409_600 + 4096) * 512 / 1e6, abs=0.01) and got["disk_read_mbs"] == pytest.approx(105.9, abs=0.1)
+
+
+def test_no_pressure_files_means_only_the_disk(tmp_path):
+    clock = Ticks()
+    io = telemetry.IoLoad(tmp_path, clock=clock)
+    put(tmp_path, "proc/diskstats", " 259       0 nvme0n1 100 0 1000 0 0 0 0 0 0 0 0")
+    io.read()
+    clock.t += 1.0
+    put(tmp_path, "proc/diskstats", " 259       0 nvme0n1 100 0 3000 0 0 0 0 0 0 0 0")
+    assert io.read() == {"disk_read_mb": 1.02, "disk_read_mbs": 1.0}
+
+
+def test_the_shader_cache_of_a_game_is_summed_over_every_library(tmp_path):
+    steam = tmp_path / ".local/share/Steam"
+    put(tmp_path, ".local/share/Steam/steamapps/libraryfolders.vdf",
+        f'"libraryfolders"\n{{\n "0" {{ "path" "{steam}" }}\n "1" {{ "path" "{tmp_path}/sd" }}\n}}')
+    (steam / "steamapps/shadercache/1794680/fozpipelinesv6").mkdir(parents=True)
+    (steam / "steamapps/shadercache/1794680/fozpipelinesv6/a.foz").write_bytes(b"x" * 3_000_000)
+    (tmp_path / "sd/steamapps/shadercache/1794680/mesa_shader_cache_sf").mkdir(parents=True)
+    (tmp_path / "sd/steamapps/shadercache/1794680/mesa_shader_cache_sf/b").write_bytes(b"x" * 500_000)
+    assert telemetry.shader_cache_mb(1794680, home=tmp_path) == 3.5
+    assert telemetry.shader_cache_mb(42, home=tmp_path) is None and telemetry.shader_cache_mb(None, home=tmp_path) is None
+
+
+def test_a_recording_keeps_throttling_shares_disk_total_and_the_load_source():
+    readings = [{"gpu_load_pct": 60.0, "gpu_load_source": "metrics", "throttle": (1 if i < 30 else 0) + (2 if i >= 55 else 0),
+                 "ram_used_gb": 6.0 + i / 100, "battery_temp_c": 34.0, "disk_read_mb": 2.0, "disk_read_mbs": 2.0,
+                 "mem_stall_pct": 0.0} for i in range(60)]
+    sensors = recording(readings)["sensors"]
+    assert sensors["samples"] == 60
+    assert sensors["throttle_power_pct"] == 50.0 and sensors["throttle_thermal_pct"] == 8.3          # 30 and 5 of 60 readings
+    assert sensors["disk_read_total_mb"] == 120.0 and sensors["gpu_load_source"] == "metrics"
+    assert sensors["ram_used_max_gb"] == 6.59 or sensors["ram_used_max_gb"] == 6.6
+    assert "ram_used_gb" in sensors["series"] and "throttle" in sensors["series"]
+    assert "battery_temp_c" not in sensors["series"] and "mem_stall_pct" not in sensors["series"] and "disk_read_mb" not in sensors["series"]
+    assert sensors["battery_temp_avg_c"] == 34.0
+
+
+def test_the_load_source_says_busy_without_the_table():
+    sensors = recording([{"gpu_load_pct": 50.0} for _ in range(5)])["sensors"]
+    assert sensors["gpu_load_source"] == "busy" and "throttle_power_pct" not in sensors
+
+
+def test_twenty_minutes_with_every_series_stays_under_the_servers_limit():
+    keys = telemetry.SERIES_KEYS
+    readings = [{k: (1234.5 + i % 7 if k not in ("throttle",) else i % 4) for k in keys} for i in range(1201)]
+    state = recording(readings)
+    assert set(state["sensors"]["series"]) == set(keys)
+    assert len(json.dumps(state, separators=(",", ":"))) < 20000, "the server drops a state over 24 KB whole"
+
+
+def test_the_real_readers_work_together_on_a_fake_deck_with_everything(tmp_path):
+    add_sensors(build_deck(tmp_path))
+    (tmp_path / "sys/class/drm/card0/device/gpu_metrics").write_bytes(metrics_table())
+    put(tmp_path, "proc/meminfo", "MemTotal: 15700000 kB\nMemAvailable: 9408576 kB\n")
+    io_files(tmp_path, 0, 0, 1000)
+    sampler = telemetry.Sampler(tmp_path)
+    sampler.start(0.0)
+    sampler.sample(1.0)
+    sampler.sample(2.0)
+    sensors = sampler.finish(3.0)["sensors"]
+    assert sensors["gpu_load_source"] == "metrics" and sensors["gpu_load_avg_pct"] == 63.0 and sensors["cpu_power_avg_w"] == pytest.approx(2.15, abs=0.06)
+    assert sensors["ram_used_avg_gb"] == 6.0 and sensors["series"]["battery_power_w"][0] == 12.5 and sensors["throttle_power_pct"] == 0

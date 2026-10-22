@@ -24,7 +24,10 @@ X_SOCKET_DIR = Path("/tmp/.X11-unix")
 TOOL_TIMEOUT = 1.5
 
 CONTROL_PROPS = ("GAMESCOPE_FOCUSED_APP", "GAMESCOPE_FOCUSED_WINDOW", "GAMESCOPE_FPS_LIMIT",
-                 "GAMESCOPE_NEW_SCALING_FILTER", "GAMESCOPE_NEW_SCALING_SCALER", "GAMESCOPE_FSR_SHARPNESS")
+                 "GAMESCOPE_NEW_SCALING_FILTER", "GAMESCOPE_NEW_SCALING_SCALER", "GAMESCOPE_FSR_SHARPNESS",
+                 # the panel's refresh rate right now, the one Steam's refresh slider asks for (0 = off), HDR (OLED only)
+                 "GAMESCOPE_DISPLAY_REFRESH_RATE_FEEDBACK", "GAMESCOPE_DYNAMIC_REFRESH",
+                 "GAMESCOPE_DISPLAY_SUPPORTS_HDR", "GAMESCOPE_DISPLAY_HDR_ENABLED")
 # the order of `gamescope --help`: "-F, --filter (linear, nearest, fsr, nis, pixel)", "-S, --scaler (auto, integer, fit, fill, stretch)"
 FILTERS = ("linear", "nearest", "fsr", "nis", "pixel")
 SCALERS = ("auto", "integer", "fit", "fill", "stretch")
@@ -103,6 +106,14 @@ def settings_from(props: dict) -> dict:
     sharp = props.get("GAMESCOPE_FSR_SHARPNESS")
     if out.get("scaling_filter") == "fsr" and sharp is not None and 0 <= sharp <= 20:
         out["fsr_sharpness"] = sharp                                          # 0 = sharpest, 20 = softest
+    refresh = props.get("GAMESCOPE_DISPLAY_REFRESH_RATE_FEEDBACK")
+    if refresh is not None and 20 <= refresh <= 240:
+        out["refresh_hz"] = refresh
+    wanted = props.get("GAMESCOPE_DYNAMIC_REFRESH")
+    if wanted is not None and (wanted == 0 or 20 <= wanted <= 240):
+        out["refresh_set_hz"] = wanted                                        # 0 = the slider is off
+    if props.get("GAMESCOPE_DISPLAY_SUPPORTS_HDR") == 1 and props.get("GAMESCOPE_DISPLAY_HDR_ENABLED") is not None:
+        out["hdr"] = props["GAMESCOPE_DISPLAY_HDR_ENABLED"] == 1              # only a screen that can do HDR says on / off
     return out
 
 
@@ -185,7 +196,7 @@ def condense(samples: Iterable[dict]) -> dict:
     if modes:
         out["render_mode"] = modes.most_common(1)[0][0]
     for sample in samples:
-        for key in ("fps_limit", "scaling_filter", "scaling_mode", "fsr_sharpness"):
+        for key in ("fps_limit", "scaling_filter", "scaling_mode", "fsr_sharpness", "refresh_hz", "refresh_set_hz", "hdr"):
             if key in sample:
                 out[key] = sample[key]
     if out.get("scaling_filter") != "fsr":

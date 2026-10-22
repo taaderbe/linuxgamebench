@@ -198,3 +198,29 @@ def test_an_unreadable_front_app_is_none_not_a_guess():
     assert gamescope.focused_app(run=lambda a: "", displays=lambda: [":0", ":1"]) is None
     assert gamescope.focused_app(run=lambda a: "GAMESCOPE_FOCUSED_APP:  not found.\n", displays=lambda: [":0"]) is None
     assert gamescope.focused_app(run=lambda a: "x", displays=lambda: []) is None
+
+
+
+# ---- refresh rate and HDR (Build 32) ----
+
+def test_the_refresh_rate_the_slider_and_hdr_on_an_oled():
+    got = gamescope.settings_from({"GAMESCOPE_DISPLAY_REFRESH_RATE_FEEDBACK": 90, "GAMESCOPE_DYNAMIC_REFRESH": 45,
+                                   "GAMESCOPE_DISPLAY_SUPPORTS_HDR": 1, "GAMESCOPE_DISPLAY_HDR_ENABLED": 1})
+    assert got == {"refresh_hz": 90, "refresh_set_hz": 45, "hdr": True}
+
+
+def test_an_lcd_says_nothing_about_hdr_and_a_slider_that_is_off_is_zero():
+    got = gamescope.settings_from({"GAMESCOPE_DISPLAY_REFRESH_RATE_FEEDBACK": 60, "GAMESCOPE_DYNAMIC_REFRESH": 0,
+                                   "GAMESCOPE_DISPLAY_SUPPORTS_HDR": 0, "GAMESCOPE_DISPLAY_HDR_ENABLED": 1})
+    assert got == {"refresh_hz": 60, "refresh_set_hz": 0}, "the LCD reports HDR_ENABLED = 1 although it cannot show HDR"
+
+
+@pytest.mark.parametrize("feedback,dynamic", [(5, 10), (500, 999)])
+def test_an_impossible_refresh_rate_is_left_out(feedback, dynamic):
+    assert gamescope.settings_from({"GAMESCOPE_DISPLAY_REFRESH_RATE_FEEDBACK": feedback, "GAMESCOPE_DYNAMIC_REFRESH": dynamic}) == {}
+
+
+def test_the_refresh_rate_is_asked_for_and_kept_over_the_looks():
+    assert "GAMESCOPE_DISPLAY_REFRESH_RATE_FEEDBACK" in gamescope.CONTROL_PROPS and "GAMESCOPE_DYNAMIC_REFRESH" in gamescope.CONTROL_PROPS
+    got = gamescope.condense([{"render_mode": "1280x800", "refresh_hz": 60, "refresh_set_hz": 40}, {"refresh_hz": 40, "hdr": False}])
+    assert got == {"render_mode": "1280x800", "refresh_hz": 40, "refresh_set_hz": 40, "hdr": False}

@@ -56,6 +56,7 @@ class Rig:
         self.send_result = (True, "https://linuxgamebench.com/benchmark/1", "")
         self.display_seen: dict = {}                  # what "Gamescope" says about the game's window; nothing by default
         self.display_looks = 0
+        self.shader_sizes: list = []                  # what the shader-cache reader answers, one per call; nothing by default
         self.closed_waits: list = []
         self.game = GameInfo(1245620, "Elden Ring", pid=4242)
         self.sysroot = build_deck(tmp_path / "sysroot")
@@ -78,7 +79,11 @@ class Rig:
             read_env=lambda pid: {"PROTON_NO_ESYNC": "1", "HOME": "/home/deck"} if pid == 4242 else {},
             read_software=lambda game: {"compat": "proton", "proton": "Proton 9.0 (Beta)"} if game else {},
             read_display=self._read_display,
+            read_shader_cache=self._read_shader_cache,
         )
+
+    def _read_shader_cache(self, app_id):
+        return self.shader_sizes.pop(0) if self.shader_sizes else None
 
     def _overlay_display(self, show):
         """mangohudctl set no_display true (hide) / reload_config true (Steam's own setting again)."""
@@ -337,6 +342,30 @@ def test_a_failing_software_reader_never_loses_the_recording(auto):
     auto.service.tick(T0 + 81)
     state = auto.sent[0]["device_state"]
     assert "software" not in state and state["power"]["source"] == "battery"
+
+
+def test_the_shader_cache_at_the_start_and_how_much_it_grew(auto):
+    auto.shader_sizes = [940.0, 952.5]                     # MB when the recording starts, MB when it ends
+    auto.chord(T0 + 20)
+    auto.service.tick(T0 + 81)
+    software = auto.sent[0]["device_state"]["software"]
+    assert software["shader_cache_mb"] == 940.0 and software["shader_cache_grew_mb"] == 12.5 and software["proton"] == "Proton 9.0 (Beta)"
+
+
+def test_a_game_without_a_shader_cache_sends_no_shader_values(auto):
+    auto.chord(T0 + 20)
+    auto.service.tick(T0 + 81)
+    assert "shader_cache_mb" not in auto.sent[0]["device_state"]["software"]
+
+
+def test_a_failing_shader_cache_reader_never_loses_the_recording(auto):
+    def broken(app_id):
+        raise OSError("library unreadable")
+    auto.service._read_shader_cache = broken
+    auto.chord(T0 + 20)
+    auto.service.tick(T0 + 81)
+    state = auto.sent[0]["device_state"]
+    assert "shader_cache_mb" not in state["software"] and state["power"]["source"] == "battery"
 
 
 def test_plugged_in_is_reported(tmp_path):

@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import os
 import re
+import struct
+import time
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -106,7 +108,7 @@ def read_power(root: Path) -> dict:
         "battery_design_wh": _round(energy_design / 1e6, 2) if energy_design else None,
         "battery_health_pct": _round(energy_full / energy_design * 100, 1) if energy_full and energy_design else None,
         "battery_cycles": _number(battery / "cycle_count"),
-        "battery_temp_c": _round((_number(battery / "temp") or 0) / 10, 1) if _number(battery / "temp") else None,
+        "battery_temp_c": _round((_number(battery / "temp") or 0) / 10, 1) if _number(battery / "temp") else _battery_temp(root),
         "battery_power_w": _round(abs(power) / 1e6, 2) if power is not None else None,
     })
     return _drop_empty(out)
@@ -192,21 +194,217 @@ def _fan_rpm(root: Path) -> Optional[float]:
     return None
 
 
+def _hwmon_label(root: Path, label: str) -> Optional[Path]:
+    """The input file next to a hwmon label, e.g. 'Battery Temp' -> .../temp1_input."""
+    base = root / "sys/class/hwmon"
+    try:
+        entries = sorted(base.iterdir())
+    except OSError:
+        return None
+    for entry in entries:
+        try:
+            labels = sorted(entry.glob("*_label"))
+        except OSError:
+            continue
+        for path in labels:
+            if _read(path) == label:
+                return path.with_name(path.name[:-len("_label")] + "_input")
+    return None
+
+
+def _battery_temp(root: Path) -> Optional[float]:
+    path = _hwmon_label(root, "Battery Temp")                  # steamdeck_hwmon (the battery's own supply has no temp file)
+    value = _number(path) if path else None
+    return _round(value / 1000, 1) if value is not None and 0 < value < 100_000 else None
+
+
+# The APU's own metrics table (amdgpu gpu_metrics, format 2 = APUs such as the Deck's): the SMU refreshes it by itself and
+# averages over a few milliseconds - unlike gpu_busy_percent, a momentary 0 / 100 reading. Layout from the kernel's
+# gpu_metrics_v2_x (the same for 2.0 to 2.4 up to the throttle status; indep_throttle_status from 2.2 on). 0xFFFF = no value.
+_NA16 = 0xFFFF
+POWER_THROTTLE_BITS = tuple(range(0, 8)) + tuple(range(16, 24))   # PPT / SPL / fast and slow PPT, current (TDC / EDC) limits
+THERMAL_THROTTLE_BITS = tuple(range(32, 48)) + (56, 57)          # temperature limits, VR hot, PROCHOT
+
+
+def parse_gpu_metrics(data: bytes) -> dict:
+    """gpu_metrics v2.x -> {gpu_load_pct, gpu_clock_mhz, cpu_power_w, gpu_power_w, cpu_temp_c, cpu_clock_mhz, throttle}.
+    {} for another format or a short table. throttle: 0 = free, 1 = at a power limit, 2 = thermal, 3 = both."""
+    if len(data) < 120 or data[2] != 2:
+        return {}
+    ok = lambda v: v != _NA16
+    out: dict = {}
+    temps = [t for t in struct.unpack_from("<8H", data, 8) if ok(t)]
+    gfx_activity = struct.unpack_from("<H", data, 28)[0]
+    _socket, cpu_mw, _soc, gfx_mw = struct.unpack_from("<4H", data, 40)
+    avg_gfxclk = struct.unpack_from("<H", data, 64)[0]
+    core_clocks = [c for c in struct.unpack_from("<8H", data, 88) if ok(c) and c > 0]
+    if ok(gfx_activity) and gfx_activity <= 100:
+        out["gpu_load_pct"] = float(gfx_activity)
+    if ok(avg_gfxclk) and avg_gfxclk > 0:
+        out["gpu_clock_mhz"] = avg_gfxclk
+    if ok(cpu_mw):
+        out["cpu_power_w"] = _round(cpu_mw / 1000, 2)
+    if ok(gfx_mw):
+        out["gpu_power_w"] = _round(gfx_mw / 1000, 2)
+    if temps:
+        out["cpu_temp_c"] = _round(max(temps) / 100, 1)        # centi-°C, the hottest core
+    if core_clocks:
+        out["cpu_clock_mhz"] = round(sum(core_clocks) / len(core_clocks))
+    if data[3] >= 2 and len(data) >= 128:
+        flags = struct.unpack_from("<Q", data, 120)[0]
+        power = any(flags >> b & 1 for b in POWER_THROTTLE_BITS)
+        thermal = any(flags >> b & 1 for b in THERMAL_THROTTLE_BITS)
+        out["throttle"] = int(power) + 2 * int(thermal)
+    return out
+
+
 def read_sensors(root: Path) -> dict:
     """One momentary reading of what Steam's overlay program does not log in Game Mode (it records frames, CPU and memory
-    only): GPU load and clock, the APU's temperature and power, the fan. All of it is plain sysfs, no root needed."""
+    only): GPU load and clock, the APU's temperature and power, the fan; from the APU's metrics table also the power split
+    into CPU and GPU, the CPU temperature and clock and whether the chip held itself back. Plain sysfs, no root needed."""
     out: dict = {}
     gpu = _gpu_device(root)
+    metrics: dict = {}
     if gpu is not None:
-        out["gpu_load_pct"] = _number(gpu / "gpu_busy_percent")
+        try:
+            metrics = parse_gpu_metrics((gpu / "gpu_metrics").read_bytes())
+        except (OSError, struct.error):
+            metrics = {}
+        out["gpu_load_pct"] = metrics.get("gpu_load_pct", _number(gpu / "gpu_busy_percent"))
+        if "gpu_load_pct" in metrics:
+            out["gpu_load_source"] = "metrics"
     hw = _hwmon(root, "amdgpu")
     if hw is not None:
         clock, temp, power = (_number(hw / n) for n in ("freq1_input", "temp1_input", "power1_average"))
         out["gpu_clock_mhz"] = None if clock is None else round(clock / 1e6)             # Hz
         out["apu_temp_c"] = None if temp is None else _round(temp / 1000, 1)             # m°C: the die temperature the GPU reports
         out["apu_power_w"] = None if power is None else _round(power / 1e6, 1)           # µW: the same reading the TDP limit caps
+    if "gpu_clock_mhz" in metrics:
+        out["gpu_clock_mhz"] = metrics["gpu_clock_mhz"]                                  # averaged, not the momentary clock
+    for key in ("cpu_power_w", "gpu_power_w", "cpu_temp_c", "cpu_clock_mhz", "throttle"):
+        if key in metrics:
+            out[key] = metrics[key]
     out["fan_rpm"] = _fan_rpm(root)
     return {k: v for k, v in out.items() if v is not None}
+
+
+def read_memory(root: Path) -> dict:
+    """RAM in use (total minus available, GB) and what the GPU holds: its carve-out plus system memory it mapped (MB)."""
+    info: dict = {}
+    for line in (_read(root / "proc/meminfo") or "").splitlines():
+        name, _, rest = line.partition(":")
+        try:
+            info[name.strip()] = float(rest.split()[0])
+        except (ValueError, IndexError):
+            continue
+    out: dict = {}
+    if "MemTotal" in info and "MemAvailable" in info:
+        out["ram_used_gb"] = _round((info["MemTotal"] - info["MemAvailable"]) / 1024 / 1024, 2)
+    gpu = _gpu_device(root)
+    if gpu is not None:
+        vram, gtt = _number(gpu / "mem_info_vram_used"), _number(gpu / "mem_info_gtt_used")
+        if vram is not None or gtt is not None:
+            out["gpu_mem_mb"] = round(((vram or 0) + (gtt or 0)) / 1024 / 1024)
+    return out
+
+
+def read_battery_now(root: Path) -> dict:
+    """What the whole Deck draws from the battery right now (only while discharging - plugged in it is the charge current)
+    and the battery's temperature."""
+    out: dict = {}
+    for _, path, kind in _supplies(root):
+        if kind != "battery" or (_read(path / "scope") or "").lower() == "device":
+            continue
+        if (_read(path / "status") or "").lower() == "discharging":
+            power = _number(path / "power_now")
+            if power is None:
+                volts, amps = _number(path / "voltage_now"), _number(path / "current_now")
+                power = volts * amps / 1e6 if volts and amps else None
+            if power is not None:
+                out["battery_power_w"] = _round(abs(power) / 1e6, 2)
+        break
+    temp = _battery_temp(root)
+    if temp is not None:
+        out["battery_temp_c"] = temp
+    return out
+
+
+_WHOLE_DISK = re.compile(r"^(nvme\d+n\d+|mmcblk\d+|sd[a-z]+|vd[a-z]+)$")
+
+
+def _psi_total(path: Path) -> Optional[float]:
+    """/proc/pressure/<x>: the 'some' line's total= (µs some task waited, since boot)."""
+    match = re.search(r"^some .*\btotal=(\d+)", _read(path) or "", re.M)
+    return float(match.group(1)) if match else None
+
+
+def _disk_sectors_read(root: Path) -> Optional[float]:
+    """Sectors read from all whole disks (internal SSD, microSD card), from /proc/diskstats."""
+    total, found = 0.0, False
+    for line in (_read(root / "proc/diskstats") or "").splitlines():
+        parts = line.split()
+        if len(parts) > 5 and _WHOLE_DISK.match(parts[2]):
+            try:
+                total += float(parts[5])
+                found = True
+            except ValueError:
+                continue
+    return total if found else None
+
+
+class IoLoad:
+    """Since the previous reading: the share of time some task waited for the disk / for memory (pressure stall
+    information) and how much was read from the disks - a loading or shader-building hitch shows up here. The first
+    reading only sets the start point."""
+
+    def __init__(self, root: str | Path = "/", clock: Callable[[], float] = time.monotonic):
+        self.root = Path(root)
+        self.clock = clock
+        self.previous: Optional[tuple] = None
+
+    def read(self) -> dict:
+        now = (self.clock(), _psi_total(self.root / "proc/pressure/io"), _psi_total(self.root / "proc/pressure/memory"),
+               _disk_sectors_read(self.root))
+        before, self.previous = self.previous, now
+        if before is None or now[0] <= before[0]:
+            return {}
+        seconds = now[0] - before[0]
+        out: dict = {}
+        for index, key in ((1, "io_stall_pct"), (2, "mem_stall_pct")):
+            if now[index] is not None and before[index] is not None:
+                out[key] = _round(min(max((now[index] - before[index]) / (seconds * 1e6) * 100, 0.0), 100.0), 1)
+        if now[3] is not None and before[3] is not None:
+            mb = max(now[3] - before[3], 0.0) * 512 / 1e6
+            out["disk_read_mb"] = _round(mb, 2)
+            out["disk_read_mbs"] = _round(mb / seconds, 1)
+        return out
+
+
+def shader_cache_mb(app_id: Optional[int], home: Optional[Path] = None, max_files: int = 50_000) -> Optional[float]:
+    """The size of a game's shader cache (all Steam libraries, internal and microSD) in MB; None when there is none."""
+    if not app_id:
+        return None
+    steam = (home or Path.home()) / ".local/share/Steam"
+    libraries = [steam]
+    for match in re.finditer(r'"path"\s+"([^"]+)"', _read(steam / "steamapps/libraryfolders.vdf") or ""):
+        if Path(match.group(1)) not in libraries:
+            libraries.append(Path(match.group(1)))
+    total, seen, found = 0, 0, False
+    for library in libraries:
+        folder = library / "steamapps/shadercache" / str(int(app_id))
+        if not folder.is_dir():
+            continue
+        found = True
+        for dirpath, _, files in os.walk(folder):
+            for name in files:
+                seen += 1
+                if seen > max_files:
+                    return _round(total / 1e6, 1)
+                try:
+                    total += os.path.getsize(os.path.join(dirpath, name))
+                except OSError:
+                    continue
+    return _round(total / 1e6, 1) if found else None
 
 
 def _cpu_times(root: Path) -> dict:
@@ -257,7 +455,16 @@ class CpuLoad:
 # (reading key, label of the summary values, unit suffix)
 SENSOR_STATS = (("gpu_load_pct", "gpu_load", "pct"), ("gpu_clock_mhz", "gpu_clock", "mhz"), ("apu_temp_c", "apu_temp", "c"),
                 ("apu_power_w", "apu_power", "w"), ("fan_rpm", "fan", "rpm"),
-                ("cpu_load_pct", "cpu_load", "pct"), ("cpu_core_max_pct", "cpu_core_max", "pct"))
+                ("cpu_load_pct", "cpu_load", "pct"), ("cpu_core_max_pct", "cpu_core_max", "pct"),
+                ("gpu_power_w", "gpu_power", "w"), ("cpu_power_w", "cpu_power", "w"), ("cpu_temp_c", "cpu_temp", "c"),
+                ("cpu_clock_mhz", "cpu_clock", "mhz"), ("ram_used_gb", "ram_used", "gb"), ("gpu_mem_mb", "gpu_mem", "mb"),
+                ("battery_temp_c", "battery_temp", "c"), ("io_stall_pct", "io_stall", "pct"), ("mem_stall_pct", "mem_stall", "pct"),
+                ("disk_read_mbs", "disk_read", "mbs"))
+# the readings that also go up as a series (the others only as mean / peak: the CPU clock is in the overlay's log already,
+# battery temperature and memory stalls move too little to draw)
+SERIES_KEYS = ("gpu_load_pct", "gpu_clock_mhz", "apu_temp_c", "apu_power_w", "fan_rpm", "cpu_load_pct", "cpu_core_max_pct",
+               "gpu_power_w", "cpu_power_w", "cpu_temp_c", "ram_used_gb", "gpu_mem_mb", "battery_power_w",
+               "io_stall_pct", "disk_read_mbs", "throttle")
 MAX_CORES = 64                  # per-core values are kept for at most this many cores
 
 
@@ -538,7 +745,9 @@ class Sampler:
         self.root = Path(root)
         self.reader = reader or (lambda: snapshot(self.root))
         self.cpu = CpuLoad(self.root)
-        self.sensor_reader = sensor_reader or (lambda: {**read_sensors(self.root), **self.cpu.read()})
+        self.io = IoLoad(self.root)
+        self.sensor_reader = sensor_reader or (lambda: {**read_sensors(self.root), **read_memory(self.root), **read_battery_now(self.root),
+                                                        **self.cpu.read(), **self.io.read()})
         self.interval = interval
         self.sensor_interval = sensor_interval
         self.environ = environ
@@ -590,16 +799,30 @@ class Sampler:
         out: dict = {}
         series: dict = {}
         longest = 0
+        def values_of(key: str) -> list:
+            return [r[key] for _, r in self.sensor_samples if isinstance(r.get(key), (int, float)) and not isinstance(r.get(key), bool)]
+
         for key, label, unit in SENSOR_STATS:
-            values = [r[key] for _, r in self.sensor_samples if isinstance(r.get(key), (int, float))]
-            if not values:
-                continue
-            out[f"{label}_avg_{unit}"] = _round(sum(values) / len(values), 1)
-            out[f"{label}_max_{unit}"] = _round(max(values), 1)
-            series[key] = _condense(values)
-            longest = max(longest, len(series[key]))
+            values = values_of(key)
+            if values:
+                out[f"{label}_avg_{unit}"] = _round(sum(values) / len(values), 1)
+                out[f"{label}_max_{unit}"] = _round(max(values), 1)
+        for key in SERIES_KEYS:
+            values = values_of(key)
+            if values:
+                series[key] = _condense(values)
+                longest = max(longest, len(series[key]))
         if not series:
             return {}
+        throttle = [int(v) for v in values_of("throttle")]
+        if throttle:                                # share of the readings the chip held itself back (power limit / heat)
+            out["throttle_power_pct"] = _round(100 * sum(1 for v in throttle if v & 1) / len(throttle), 1)
+            out["throttle_thermal_pct"] = _round(100 * sum(1 for v in throttle if v & 2) / len(throttle), 1)
+        read_mb = values_of("disk_read_mb")
+        if read_mb:
+            out["disk_read_total_mb"] = _round(sum(read_mb), 1)
+        if values_of("gpu_load_pct"):
+            out["gpu_load_source"] = "metrics" if any(r.get("gpu_load_source") == "metrics" for _, r in self.sensor_samples) else "busy"
         cores = [r["cpu_cores_pct"] for _, r in self.sensor_samples if isinstance(r.get("cpu_cores_pct"), list) and r["cpu_cores_pct"]]
         width = len(cores[-1]) if cores else 0
         cores = [c for c in cores if len(c) == width][:] if 0 < width <= MAX_CORES else []
