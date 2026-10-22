@@ -979,3 +979,50 @@ def test_a_recording_without_a_hole_is_saved_as_before(overlay):
     overlay.chord(T0 + 80)
     overlay.service.tick(T0 + 91)
     assert len(overlay.sent) == 1 and not any("no frames" in text for text in overlay.said)
+
+
+# ----- the game closes while it is being recorded ------------------------------------------------------------------------------
+
+def test_a_game_closed_during_the_recording_ends_it_at_once(overlay):
+    """Thomas on the Deck: Vampire Survivors closed during its recording, Brotato started, the chord in Brotato only ended the old
+    recording. Now the recording ends within one look (2 s) after the game is gone: log off, error tone, nothing saved."""
+    overlay.chord(T0 + 20)
+    overlay.service.tick(T0 + 30)
+    overlay.running = set()                                 # the game quit, Steam's menu is on screen
+    overlay.service.tick(T0 + 32)
+    assert overlay.service.session.phase.value == "idle" and overlay.overlay_calls == [True, False]
+    assert overlay.said[-1] == "the game was closed during the recording - nothing saved" and overlay.sounds[-1] == "error"
+    assert overlay.statuses() == [] and overlay.sent == []
+    overlay.service.tick(T0 + 120)
+    assert overlay.overlay_calls == [True, False] and overlay.statuses() == []    # nothing happens later on its own
+
+
+def test_after_a_game_was_closed_the_next_chord_records_the_next_game(overlay):
+    overlay.chord(T0 + 20)
+    overlay.running = set()
+    overlay.service.tick(T0 + 25)
+    overlay.running, overlay.front = {1942280}, 1942280     # Brotato is started and in front
+    overlay.chord(T0 + 40)
+    assert overlay.service.session.phase.value == "recording" and overlay.said[-1].startswith("recording App 1942280")
+    assert overlay.overlay_calls == [True, False, True]
+    overlay.chord(T0 + 100)
+    overlay.service.tick(T0 + 111)
+    assert len(overlay.sent) == 1 and overlay.sent[0]["steam_app_id"] == 1942280, overlay.sent[0].keys()
+
+
+def test_a_game_that_keeps_running_is_never_dropped(overlay):
+    overlay.chord(T0 + 20)
+    for second in range(21, 80):
+        overlay.service.tick(T0 + second)
+    assert overlay.service.session.phase.value == "recording"
+    overlay.chord(T0 + 80)
+    assert overlay.statuses() == ["pending"]
+
+
+def test_a_dropped_recording_moves_its_log_out_of_the_home_folder(home_overlay):
+    home_overlay.chord(T0 + 20)
+    home_overlay.running = set()
+    home_overlay.service.tick(T0 + 25)
+    assert home_overlay.said[-1] == "the game was closed during the recording - nothing saved"
+    assert home_mangoapp_files(home_overlay) == []
+    assert (home_overlay.overlay_dir / "mangoapp_2026-10-20_18-00-00.csv").exists()

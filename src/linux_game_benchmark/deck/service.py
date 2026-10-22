@@ -39,6 +39,7 @@ def _default_display(game: Optional[deck_game.GameInfo]) -> dict:
 
 DISPLAY_PROBE_INTERVAL = 20.0            # seconds between looks at the game's window while a recording runs
 FOCUS_POLL_INTERVAL = 2.0                # seconds between looks at what is in front (overlay recordings only)
+GAME_CLOSED = "the game was closed during the recording - nothing saved"
 FOCUS_LOSS_LIMIT = 5.0                   # the overlay program logs what is in front: more than this away from the game spoils the minute
 LOG_WAIT_SECONDS = 3.0                   # how long the overlay program may take to open the log file it was told to start
 STOP_RETRY_SECONDS = 5.0                 # a log that could not be ended is ended again this often
@@ -334,16 +335,28 @@ class DeckService:
             active.away += now - active.away_since
             active.away_since = None
 
+    def _game_closed(self, active: "Active") -> bool:
+        return active.game is not None and active.game.app_id not in self._games_now()
+
     def _overlay_problem(self, active: "Active", now: float) -> Optional[str]:
         """Why the minute from the overlay program cannot be used, or None."""
-        if active.game is not None and active.game.app_id not in self._games_now():
+        if self._game_closed(active):
             # the overlay log goes on after the game ends (Steam's menu): those frames are not the game
-            return "the game was closed during the recording - nothing saved"
+            return GAME_CLOSED
         self._watch_front(active, now)
         away = active.away + (now - active.away_since if active.away_since is not None else 0.0)
         if away > FOCUS_LOSS_LIMIT:
             return f"the game was not in front for {away:.0f} s during the recording (Steam's menu?) - nothing saved"
         return None
+
+    def _drop(self, text: str, now: float) -> None:
+        """End a running overlay recording that can no longer be used: the log stops, nothing is saved, the next chord starts anew."""
+        active, self._active = self._active, None
+        self.session.reset()
+        if self._stop_overlay_log(now):
+            self._wait_closed(active.log)
+        self._archive_log(active.log)
+        self._message(text, "error")
 
     def recover(self) -> None:
         """At service start: a log a previous run left open (crash, kill) would run - and show its red dot - for ever."""
@@ -490,6 +503,10 @@ class DeckService:
         if self._active and self._active.on_demand and self.session.phase.value == "recording" \
                 and now - self._active.last_focus >= FOCUS_POLL_INTERVAL:
             self._watch_front(self._active, now)
+            if self._game_closed(self._active):
+                # ended at once, not at the next chord: otherwise the log (and its red dot) runs on into the next game,
+                # and the chord meant to start a recording there only ends this one
+                self._drop(GAME_CLOSED, now)
         if self._overlay_on and (self._active is None or self.session.phase.value != "recording") \
                 and now - self._overlay_stop_try >= STOP_RETRY_SECONDS:
             self._overlay_stop_try = now                         # nothing is recording any more, yet the log runs: end it
