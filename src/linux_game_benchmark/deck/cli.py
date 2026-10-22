@@ -86,6 +86,7 @@ def setup(
 
     console.print("\n" + record_with_text(cfg))
     console.print("[bold]Now switch back to Game Mode - that is all.[/bold]")
+    console.print("[dim]If the controller does not react after the switch, press the Steam button once (or restart the Deck) - that is SteamOS, not Linux Game Bench.[/dim]")
 
 
 def _redeem_ticket(ticket: str) -> bool:
