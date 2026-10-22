@@ -118,7 +118,8 @@ def test_the_error_sound_is_two_quick_beeps_high_enough_for_the_decks_speakers(t
     """Thomas did not hear the old error tone (one 200 Hz tone - too low for the small speakers). Now: two short beeps."""
     notes = deck_setup._SOUNDS["error"]
     tones = [f for f, _ in notes if f]
-    assert len(tones) == 2 and min(tones) >= 400 and sum(d for _, d in notes) <= 0.4
+    assert len(tones) == 2 and min(tones) >= 900 and sum(d for _, d in notes) <= 0.4      # 440 Hz was still missed
+    assert deck_setup._GAIN["error"] > 1.0
     levels = _levels(deck_setup.ensure_sounds(tmp_path)["error"])
     loud = [level > 3000 for level in levels]
     assert loud[2] and loud[-3] and not all(loud), levels           # beep, pause, beep
@@ -130,7 +131,7 @@ def test_an_old_sound_file_is_replaced_after_an_update(tmp_path):
     old = tmp_path / "error.wav"
     deck_setup.write_sound(old, [(200, 0.30)])                       # what versions before had written
     paths = deck_setup.ensure_sounds(tmp_path)
-    assert paths["error"].read_bytes() == deck_setup.sound_bytes(deck_setup._SOUNDS["error"])
+    assert paths["error"].read_bytes() == deck_setup.sound_bytes(deck_setup._SOUNDS["error"], gain=deck_setup._GAIN["error"])
     stamp = paths["error"].stat().st_mtime_ns
     deck_setup.ensure_sounds(tmp_path)
     assert paths["error"].stat().st_mtime_ns == stamp                 # unchanged sounds are not written again

@@ -304,11 +304,14 @@ _SOUNDS = {
     "stop": [(880, 0.09), (660, 0.14)],
     "cancel": [(520, 0.08), (390, 0.08), (260, 0.16)],
     "done": [(660, 0.07), (880, 0.07), (1100, 0.16)],
-    "error": [(440, 0.08), (0, 0.06), (440, 0.08)],      # two quick beeps (a single 200 Hz tone was lost in the Deck's speakers)
+    # two quick, high, louder beeps: one 200 Hz tone and then two 440 Hz beeps were both missed on the Deck's small speakers
+    # (the 440 Hz beeps were measurably in the output - too low a pitch for those speakers next to the game's sound)
+    "error": [(1047, 0.09), (0, 0.07), (1047, 0.09)],
 }
+_GAIN = {"error": 1.6}                                     # louder than the others (1.0 = amplitude 9000 of 32767)
 
 
-def sound_bytes(notes: list[tuple[int, float]], rate: int = 22050) -> bytes:
+def sound_bytes(notes: list[tuple[int, float]], rate: int = 22050, gain: float = 1.0) -> bytes:
     """A mono 16-bit WAV of the notes (frequency 0 = silence)."""
     buffer = io.BytesIO()
     with wave.open(buffer, "wb") as wav:
@@ -320,7 +323,7 @@ def sound_bytes(notes: list[tuple[int, float]], rate: int = 22050) -> bytes:
             count = int(rate * seconds)
             for i in range(count):
                 fade = min(1.0, i / 200, (count - i) / 200)        # no clicks
-                frames += struct.pack("<h", int(9000 * fade * math.sin(2 * math.pi * freq * i / rate)))
+                frames += struct.pack("<h", int(9000 * gain * fade * math.sin(2 * math.pi * freq * i / rate)))
         wav.writeframes(bytes(frames))
     return buffer.getvalue()
 
@@ -337,7 +340,7 @@ def ensure_sounds(directory: Optional[Path] = None) -> dict[str, Path]:
     paths = {}
     for name, notes in _SOUNDS.items():
         path = directory / f"{name}.wav"
-        wanted = sound_bytes(notes)
+        wanted = sound_bytes(notes, gain=_GAIN.get(name, 1.0))
         try:
             same = path.read_bytes() == wanted
         except OSError:
