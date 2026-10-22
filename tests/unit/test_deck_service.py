@@ -942,3 +942,40 @@ def test_a_log_a_crash_left_behind_is_tidied_up_at_the_start(home_overlay):
     os.utime(stale, (1, 1))
     home_overlay.service.recover()
     assert not stale.exists() and (home_overlay.overlay_dir / stale.name).exists()
+
+
+# ----- a paused game: no frames for a while ------------------------------------------------------------------------------------
+
+def cut_rows_after(rig, seconds):
+    """Make the overlay program's next log end its frames `seconds` after the command (the game stops drawing)."""
+    real = rig._overlay_log
+
+    def stopping(on):
+        ok = real(on)
+        if on and rig.overlay_files:
+            path = rig.overlay_files[-1]
+            keep = [line for line in path.read_text().splitlines(keepends=True)
+                    if not line[:1].isdigit() or int(line.rsplit(",", 1)[1]) < seconds * 1_000_000_000]
+            path.write_text("".join(keep))
+        return ok
+    rig.service._overlay_log = stopping
+
+
+def test_a_recording_in_which_the_game_stopped_drawing_is_not_saved(overlay):
+    """Vampire Survivors behind Steam's menu draws nothing: the log ends after 4.5 s of a 60 s recording. Uploaded, it would be
+    a 4.5 s run (refused by the server) or a shorter run labelled 60 s - so it is dropped with the error tone."""
+    cut_rows_after(overlay, 4.5)
+    overlay.chord(T0 + 20)
+    overlay.chord(T0 + 80)
+    overlay.service.tick(T0 + 91)
+    assert overlay.sent == [] and overlay.statuses() == []
+    assert any("showed no frames for 56 s" in text and "nothing saved" in text for text in overlay.said), overlay.said
+    assert overlay.sounds[-1] == "error"
+
+
+def test_a_recording_without_a_hole_is_saved_as_before(overlay):
+    cut_rows_after(overlay, 1000)
+    overlay.chord(T0 + 20)
+    overlay.chord(T0 + 80)
+    overlay.service.tick(T0 + 91)
+    assert len(overlay.sent) == 1 and not any("no frames" in text for text in overlay.said)

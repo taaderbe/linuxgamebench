@@ -433,6 +433,12 @@ class DeckService:
             self.session.reset()
             self._message(f"could not cut the recording: {exc}", "error")
             return
+        hole = cut.hole_seconds()
+        if hole is not None:
+            # a paused or hung game leaves no rows: uploaded, it would look like a shorter run (or fail the server's minimum)
+            self.session.reset()
+            self._message(f"the game showed no frames for {hole:.0f} s during the recording (paused?) - nothing saved", "error")
+            return
         auto = self.config.auto_upload
         upload_now = auto and self.config.cancel_window <= 0
         meta = {

@@ -118,3 +118,50 @@ def test_a_log_that_keeps_growing_is_not_closed_and_a_missing_one_cannot_be(tmp_
         stop.set()
         thread.join()
     assert wait_until_closed(tmp_path / "nowhere.csv", timeout=0.2, poll=0.01) is False
+
+
+# ----- holes: a paused or hung game leaves no rows ---------------------------------------------------------------------------
+
+def make_log_with_hole(tmp_path, hole_from, hole_to, seconds=120, fps=60, name="game.exe_2026-10-20_18-00-00.csv"):
+    """Like make_log, but without rows between hole_from and hole_to (seconds) - what MangoHud writes while a game draws nothing."""
+    step = 1_000_000_000 // fps
+    rows = [f"{fps},{1000 / fps:.3f},40.0,90.0,{i * step}\n" for i in range(seconds * fps)
+            if not hole_from <= i / fps < hole_to]
+    path = tmp_path / name
+    path.write_text(HEADER + "".join(rows))
+    return path
+
+
+def test_a_full_segment_has_no_hole(tmp_path):
+    cut = cut_log(make_log(tmp_path), T0 + 10, T0 + 70, tmp_path / "cut.csv")
+    assert cut.hole_seconds() is None
+    assert cut.longest_gap_seconds < 0.02 and cut.head_seconds < 0.02 and cut.tail_seconds < 0.02
+
+
+def test_frames_missing_in_the_middle_are_a_hole(tmp_path):
+    cut = cut_log(make_log_with_hole(tmp_path, 30, 42), T0 + 10, T0 + 70, tmp_path / "cut.csv")
+    assert cut.hole_seconds() == pytest.approx(12.0, abs=0.05)
+
+
+def test_frames_that_stop_before_the_end_mark_are_a_hole(tmp_path):
+    """Vampire Survivors on the Deck: after Steam's menu the log had no rows any more (4.5 s of 60 s)."""
+    cut = cut_log(make_log(tmp_path, seconds=15), T0 + 10, T0 + 70, tmp_path / "cut.csv")
+    assert cut.tail_seconds == pytest.approx(55.0, abs=0.05) and cut.hole_seconds() == pytest.approx(55.0, abs=0.05)
+
+
+def test_frames_that_start_late_are_a_hole(tmp_path):
+    cut = cut_log(make_log_with_hole(tmp_path, 0, 20), T0 + 10, T0 + 70, tmp_path / "cut.csv")
+    assert cut.head_seconds == pytest.approx(10.0, abs=0.05) and cut.hole_seconds() is not None
+
+
+@pytest.mark.parametrize("hole, flagged", [(1.9, False), (2.1, True)])
+def test_the_limit_inside_is_two_seconds(tmp_path, hole, flagged):
+    cut = cut_log(make_log_with_hole(tmp_path, 30, 30 + hole), T0 + 10, T0 + 70, tmp_path / "cut.csv")
+    assert (cut.hole_seconds() is not None) is flagged, cut
+
+
+@pytest.mark.parametrize("late, flagged", [(2.5, False), (3.5, True)])
+def test_the_edges_get_one_second_more(tmp_path, late, flagged):
+    """The first frame comes a moment after the command, and in Desktop Mode the start time comes from whole seconds."""
+    cut = cut_log(make_log_with_hole(tmp_path, 10, 10 + late), T0 + 10, T0 + 70, tmp_path / "cut.csv")
+    assert (cut.hole_seconds() is not None) is flagged, cut
