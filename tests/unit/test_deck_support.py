@@ -104,6 +104,38 @@ def test_sounds_are_valid_short_wav_files(tmp_path):
         assert wav.getnchannels() == 1 and wav.getframerate() == 22050 and 0.1 < wav.getnframes() / 22050 < 1.0
 
 
+def _levels(path, parts=22):
+    """Loudness of the file in `parts` equal slices (peak of each slice)."""
+    import struct
+    with wave.open(str(path)) as wav:
+        data = wav.readframes(wav.getnframes())
+    samples = struct.unpack(f"<{len(data) // 2}h", data)
+    size = len(samples) // parts
+    return [max(abs(x) for x in samples[i * size:(i + 1) * size]) for i in range(parts)]
+
+
+def test_the_error_sound_is_two_quick_beeps_high_enough_for_the_decks_speakers(tmp_path):
+    """Thomas did not hear the old error tone (one 200 Hz tone - too low for the small speakers). Now: two short beeps."""
+    notes = deck_setup._SOUNDS["error"]
+    tones = [f for f, _ in notes if f]
+    assert len(tones) == 2 and min(tones) >= 400 and sum(d for _, d in notes) <= 0.4
+    levels = _levels(deck_setup.ensure_sounds(tmp_path)["error"])
+    loud = [level > 3000 for level in levels]
+    assert loud[2] and loud[-3] and not all(loud), levels           # beep, pause, beep
+    runs = "".join("x" if x else "." for x in loud).strip(".").split(".")
+    assert len([r for r in runs if r]) == 2, levels
+
+
+def test_an_old_sound_file_is_replaced_after_an_update(tmp_path):
+    old = tmp_path / "error.wav"
+    deck_setup.write_sound(old, [(200, 0.30)])                       # what versions before had written
+    paths = deck_setup.ensure_sounds(tmp_path)
+    assert paths["error"].read_bytes() == deck_setup.sound_bytes(deck_setup._SOUNDS["error"])
+    stamp = paths["error"].stat().st_mtime_ns
+    deck_setup.ensure_sounds(tmp_path)
+    assert paths["error"].stat().st_mtime_ns == stamp                 # unchanged sounds are not written again
+
+
 # ----- queue / log housekeeping -------------------------------------------------------
 
 def test_queue_prune_keeps_pending_and_removes_old_finished(tmp_path):

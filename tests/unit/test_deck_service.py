@@ -1026,3 +1026,31 @@ def test_a_dropped_recording_moves_its_log_out_of_the_home_folder(home_overlay):
     assert home_overlay.said[-1] == "the game was closed during the recording - nothing saved"
     assert home_mangoapp_files(home_overlay) == []
     assert (home_overlay.overlay_dir / "mangoapp_2026-10-20_18-00-00.csv").exists()
+
+
+# ----- Steam's overlay level changed during a recording ------------------------------------------------------------------------
+
+def overlay_ends_log_by_itself(rig):
+    """What the overlay program does when Steam rewrites its file (level changed in the Quick Access Menu): it closes the log
+    and writes the summary next to it."""
+    log = rig.overlay_files[-1]
+    log.with_name(log.stem + "_summary.csv").write_text("0.1% Min FPS,1% Min FPS\n30,40\n")
+
+
+def test_a_log_the_overlay_program_ended_by_itself_ends_the_recording_at_once(overlay):
+    overlay.chord(T0 + 20)
+    overlay.service.tick(T0 + 22)
+    assert overlay.service.session.phase.value == "recording"
+    overlay_ends_log_by_itself(overlay)
+    overlay.service.tick(T0 + 24)
+    assert overlay.service.session.phase.value == "idle" and overlay.statuses() == [] and overlay.sent == []
+    assert "performance overlay was changed during the recording" in overlay.said[-1] and overlay.sounds[-1] == "error"
+    overlay.chord(T0 + 40)                                   # the next chord starts a new recording
+    assert overlay.service.session.phase.value == "recording" and overlay.said[-1].startswith("recording")
+
+
+def test_a_log_without_a_summary_keeps_recording(overlay):
+    overlay.chord(T0 + 20)
+    for second in range(21, 79):
+        overlay.service.tick(T0 + second)
+    assert overlay.service.session.phase.value == "recording"

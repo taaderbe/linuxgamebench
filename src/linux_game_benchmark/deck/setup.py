@@ -6,6 +6,7 @@ every function is idempotent, so running the setup again repairs a broken instal
 
 from __future__ import annotations
 
+import io
 import math
 import os
 import shutil
@@ -303,13 +304,14 @@ _SOUNDS = {
     "stop": [(880, 0.09), (660, 0.14)],
     "cancel": [(520, 0.08), (390, 0.08), (260, 0.16)],
     "done": [(660, 0.07), (880, 0.07), (1100, 0.16)],
-    "error": [(200, 0.30)],
+    "error": [(440, 0.08), (0, 0.06), (440, 0.08)],      # two quick beeps (a single 200 Hz tone was lost in the Deck's speakers)
 }
 
 
-def write_sound(path: Path, notes: list[tuple[int, float]], rate: int = 22050) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(path), "wb") as wav:
+def sound_bytes(notes: list[tuple[int, float]], rate: int = 22050) -> bytes:
+    """A mono 16-bit WAV of the notes (frequency 0 = silence)."""
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav:
         wav.setnchannels(1)
         wav.setsampwidth(2)
         wav.setframerate(rate)
@@ -320,16 +322,29 @@ def write_sound(path: Path, notes: list[tuple[int, float]], rate: int = 22050) -
                 fade = min(1.0, i / 200, (count - i) / 200)        # no clicks
                 frames += struct.pack("<h", int(9000 * fade * math.sin(2 * math.pi * freq * i / rate)))
         wav.writeframes(bytes(frames))
+    return buffer.getvalue()
+
+
+def write_sound(path: Path, notes: list[tuple[int, float]], rate: int = 22050) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(sound_bytes(notes, rate))
     return path
 
 
 def ensure_sounds(directory: Optional[Path] = None) -> dict[str, Path]:
+    """The sound files, written again whenever a sound changed (an update must not keep playing the old tone)."""
     directory = directory or deck_config.data_dir() / "sounds"
     paths = {}
     for name, notes in _SOUNDS.items():
         path = directory / f"{name}.wav"
-        if not path.exists():
-            write_sound(path, notes)
+        wanted = sound_bytes(notes)
+        try:
+            same = path.read_bytes() == wanted
+        except OSError:
+            same = False
+        if not same:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(wanted)
         paths[name] = path
     return paths
 

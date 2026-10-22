@@ -40,6 +40,7 @@ def _default_display(game: Optional[deck_game.GameInfo]) -> dict:
 DISPLAY_PROBE_INTERVAL = 20.0            # seconds between looks at the game's window while a recording runs
 FOCUS_POLL_INTERVAL = 2.0                # seconds between looks at what is in front (overlay recordings only)
 GAME_CLOSED = "the game was closed during the recording - nothing saved"
+LOG_ENDED = "Steam's performance overlay was changed during the recording, which ended the log - nothing saved"
 FOCUS_LOSS_LIMIT = 5.0                   # the overlay program logs what is in front: more than this away from the game spoils the minute
 LOG_WAIT_SECONDS = 3.0                   # how long the overlay program may take to open the log file it was told to start
 STOP_RETRY_SECONDS = 5.0                 # a log that could not be ended is ended again this often
@@ -335,6 +336,11 @@ class DeckService:
             active.away += now - active.away_since
             active.away_since = None
 
+    @staticmethod
+    def _log_ended(active: "Active") -> bool:
+        """The overlay program ended the log on its own: the summary file appears next to it only when a log closes."""
+        return active.log.with_name(active.log.stem + "_summary.csv").exists()
+
     def _game_closed(self, active: "Active") -> bool:
         return active.game is not None and active.game.app_id not in self._games_now()
 
@@ -507,6 +513,10 @@ class DeckService:
                 # ended at once, not at the next chord: otherwise the log (and its red dot) runs on into the next game,
                 # and the chord meant to start a recording there only ends this one
                 self._drop(GAME_CLOSED, now)
+            elif self._log_ended(self._active):
+                # changing the overlay level in the Quick Access Menu makes Steam rewrite its MangoHud file; the overlay
+                # program reloads it and that ends the log (it writes its summary) - from here on nothing is recorded
+                self._drop(LOG_ENDED, now)
         if self._overlay_on and (self._active is None or self.session.phase.value != "recording") \
                 and now - self._overlay_stop_try >= STOP_RETRY_SECONDS:
             self._overlay_stop_try = now                         # nothing is recording any more, yet the log runs: end it
