@@ -203,6 +203,108 @@ def test_state_stays_small(tmp_path):
     assert len(json.dumps(sampler.finish(60.0))) < 3000
 
 
+# ----- the sensors MangoHud's log lacks in Game Mode: GPU load / clock, APU temperature / power, fan -----------------------------
+
+def add_sensors(root: Path, *, busy=87, clock_hz=1_100_000_000, temp_mc=61_000, power_uw=12_300_000, fan=3200):
+    """What the real Deck shows (amdgpu hwmon: Hz, m°C, µW; the fan sits on its own hwmon)."""
+    put(root, "sys/class/drm/card0/device/gpu_busy_percent", busy)
+    put(root, "sys/class/hwmon/hwmon3/freq1_input", clock_hz)
+    put(root, "sys/class/hwmon/hwmon3/temp1_input", temp_mc)
+    put(root, "sys/class/hwmon/hwmon3/power1_average", power_uw)
+    put(root, "sys/class/hwmon/hwmon4/name", "steamdeck_hwmon")
+    put(root, "sys/class/hwmon/hwmon4/fan1_input", fan)
+
+
+def test_the_sensors_are_read_in_the_units_people_know(tmp_path):
+    add_sensors(build_deck(tmp_path))
+    assert telemetry.read_sensors(tmp_path) == {"gpu_load_pct": 87.0, "gpu_clock_mhz": 1100, "apu_temp_c": 61.0, "apu_power_w": 12.3, "fan_rpm": 3200.0}
+
+
+def test_a_sensor_that_is_not_there_is_left_out_and_an_idle_zero_is_kept(tmp_path):
+    build_deck(tmp_path)
+    assert telemetry.read_sensors(tmp_path) == {}
+    put(tmp_path, "sys/class/drm/card0/device/gpu_busy_percent", 0)
+    put(tmp_path, "sys/class/hwmon/hwmon3/freq1_input", 200_000_000)
+    assert telemetry.read_sensors(tmp_path) == {"gpu_load_pct": 0.0, "gpu_clock_mhz": 200}, "0 % load is a measurement, not a missing value"
+
+
+def test_an_unreadable_sensor_file_is_just_missing(tmp_path):
+    add_sensors(build_deck(tmp_path))
+    broken = tmp_path / "sys/class/hwmon/hwmon3/temp1_input"
+    broken.unlink()
+    broken.mkdir()                                              # reading a directory fails like a permission error does
+    assert "apu_temp_c" not in telemetry.read_sensors(tmp_path)
+
+
+class Walk:
+    """A sensor reader that walks through prepared readings."""
+    def __init__(self, readings):
+        self.readings = list(readings)
+
+    def __call__(self):
+        return self.readings.pop(0) if len(self.readings) > 1 else self.readings[0]
+
+
+def recording(readings, step=1.0, **kw):
+    sampler = telemetry.Sampler("/nonexistent", reader=lambda: snap(), sensor_reader=Walk(readings), **kw)
+    sampler.start(0.0)
+    for i in range(1, len(readings) - 1):
+        sampler.sample(i * step)
+    return sampler.finish((len(readings) - 1) * step)
+
+
+def test_a_minute_of_sensors_is_condensed_to_mean_peak_and_a_series(tmp_path):
+    readings = [{"gpu_load_pct": 50 if i % 2 else 100, "gpu_clock_mhz": 1000 + i, "apu_temp_c": 60.0 + i / 10, "apu_power_w": 10.0, "fan_rpm": 3000} for i in range(61)]
+    sensors = recording(readings)["sensors"]
+    assert sensors["gpu_load_avg_pct"] == pytest.approx(75, abs=1) and sensors["gpu_load_max_pct"] == 100
+    assert sensors["gpu_clock_avg_mhz"] == 1030 and sensors["gpu_clock_max_mhz"] == 1060
+    assert sensors["apu_temp_max_c"] == 66.0 and sensors["apu_power_avg_w"] == 10.0 and sensors["fan_avg_rpm"] == 3000 and sensors["fan_max_rpm"] == 3000
+    assert sensors["samples"] == 61 and sensors["step_s"] == 1.0
+    assert set(sensors["series"]) == {"gpu_load_pct", "gpu_clock_mhz", "apu_temp_c", "apu_power_w", "fan_rpm"}
+    assert len(sensors["series"]["gpu_load_pct"]) == 61 and sensors["series"]["gpu_clock_mhz"][:3] == [1000, 1001, 1002]
+
+
+def test_a_long_recording_stays_small_and_keeps_its_shape(tmp_path):
+    readings = [{"gpu_load_pct": float(i % 100), "gpu_clock_mhz": 1600} for i in range(1201)]          # 20 minutes, one reading a second
+    state = recording(readings)
+    sensors = state["sensors"]
+    assert len(sensors["series"]["gpu_load_pct"]) == telemetry.MAX_SERIES_POINTS == len(sensors["series"]["gpu_clock_mhz"])
+    assert sensors["step_s"] == pytest.approx(1200 / 119, abs=0.1)
+    series = sensors["series"]["gpu_load_pct"]
+    assert sum(series) / len(series) == pytest.approx(sensors["gpu_load_avg_pct"], abs=0.5), "condensing keeps the mean"
+    assert len(json.dumps(state, separators=(",", ":"))) < 5000
+
+
+def test_without_any_sensor_the_state_has_no_sensors_section(tmp_path):
+    build_deck(tmp_path)
+    sampler = telemetry.Sampler(tmp_path)
+    sampler.start(0.0)
+    sampler.sample(2.0)
+    assert "sensors" not in sampler.finish(4.0)
+
+
+def test_a_sensor_reader_that_fails_never_costs_the_recording(tmp_path):
+    def broken():
+        raise RuntimeError("sysfs went away")
+    sampler = telemetry.Sampler(tmp_path, reader=lambda: snap(), sensor_reader=broken)
+    sampler.start(0.0)
+    sampler.sample(2.0)
+    state = sampler.finish(4.0)
+    assert "sensors" not in state and state["power"]["source"] == "battery"
+
+
+def test_the_real_reader_and_the_sampler_work_together_on_a_fake_deck(tmp_path):
+    add_sensors(build_deck(tmp_path))
+    sampler = telemetry.Sampler(tmp_path)
+    sampler.start(0.0)
+    sampler.sample(1.0)
+    put(tmp_path, "sys/class/drm/card0/device/gpu_busy_percent", 99)
+    sampler.sample(2.0)
+    sensors = sampler.finish(3.0)["sensors"]
+    assert sensors["gpu_load_max_pct"] == 99 and sensors["gpu_clock_avg_mhz"] == 1100 and sensors["samples"] == 4
+    assert sensors["series"]["gpu_load_pct"] == [87.0, 87.0, 99.0, 99.0]
+
+
 # ----- the versions of the Deck: storage and screen ----------------------------------------------------------------------
 
 def edid(maker="SDC", product=0x4166, name=b"ATNA40YK20", serial=b"SERIAL123"):

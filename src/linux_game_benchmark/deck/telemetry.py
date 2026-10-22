@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Callable, Optional
 
 SAMPLE_INTERVAL = 2.0
+SENSOR_INTERVAL = 1.0           # the GPU / temperature sensors are read more often: they move faster than the battery
+MAX_SERIES_POINTS = 120         # a sensor series is condensed to at most this many points (a 10 minute recording stays small)
 SCHEMA_VERSION = 1
 
 # launch options that change performance and are safe to publish (never values of secrets / paths)
@@ -173,6 +175,51 @@ def read_limits(root: Path) -> dict:
     smt = _read(root / "sys/devices/system/cpu/smt/control")
     out["smt"] = None if smt is None else smt == "on"
     return _drop_empty(out)
+
+
+# ----- sensors MangoHud's log lacks in Game Mode -----------------------------------------------------------------------------
+
+def _fan_rpm(root: Path) -> Optional[float]:
+    base = root / "sys/class/hwmon"
+    try:
+        entries = sorted(base.iterdir())
+    except OSError:
+        return None
+    for entry in entries:
+        rpm = _number(entry / "fan1_input")
+        if rpm is not None:
+            return rpm
+    return None
+
+
+def read_sensors(root: Path) -> dict:
+    """One momentary reading of what Steam's overlay program does not log in Game Mode (it records frames, CPU and memory
+    only): GPU load and clock, the APU's temperature and power, the fan. All of it is plain sysfs, no root needed."""
+    out: dict = {}
+    gpu = _gpu_device(root)
+    if gpu is not None:
+        out["gpu_load_pct"] = _number(gpu / "gpu_busy_percent")
+    hw = _hwmon(root, "amdgpu")
+    if hw is not None:
+        clock, temp, power = (_number(hw / n) for n in ("freq1_input", "temp1_input", "power1_average"))
+        out["gpu_clock_mhz"] = None if clock is None else round(clock / 1e6)             # Hz
+        out["apu_temp_c"] = None if temp is None else _round(temp / 1000, 1)             # m°C: the die temperature the GPU reports
+        out["apu_power_w"] = None if power is None else _round(power / 1e6, 1)           # µW: the same reading the TDP limit caps
+    out["fan_rpm"] = _fan_rpm(root)
+    return {k: v for k, v in out.items() if v is not None}
+
+
+# (reading key, label of the summary values, unit suffix)
+SENSOR_STATS = (("gpu_load_pct", "gpu_load", "pct"), ("gpu_clock_mhz", "gpu_clock", "mhz"), ("apu_temp_c", "apu_temp", "c"),
+                ("apu_power_w", "apu_power", "w"), ("fan_rpm", "fan", "rpm"))
+
+
+def _condense(values: list[float], points: int = MAX_SERIES_POINTS) -> list[float]:
+    """At most `points` values, each the mean of a run of neighbours (the shape of the recording is kept)."""
+    if len(values) <= points:
+        return [round(v, 1) for v in values]
+    size = len(values) / points
+    return [round(sum(chunk) / len(chunk), 1) for chunk in (values[int(i * size):max(int((i + 1) * size), int(i * size) + 1)] for i in range(points))]
 
 
 # ----- display ------------------------------------------------------------------------------------------------------------
@@ -439,14 +486,19 @@ class Sampler:
     """Reads the volatile state every few seconds while a recording runs and condenses it into one `device_state`."""
 
     def __init__(self, root: str | Path = "/", environ: Optional[dict] = None,
-                 reader: Optional[Callable[[], dict]] = None, interval: float = SAMPLE_INTERVAL):
+                 reader: Optional[Callable[[], dict]] = None, interval: float = SAMPLE_INTERVAL,
+                 sensor_reader: Optional[Callable[[], dict]] = None, sensor_interval: float = SENSOR_INTERVAL):
         self.root = Path(root)
         self.reader = reader or (lambda: snapshot(self.root))
+        self.sensor_reader = sensor_reader or (lambda: read_sensors(self.root))
         self.interval = interval
+        self.sensor_interval = sensor_interval
         self.environ = environ
         self.samples: list[tuple[float, dict]] = []
+        self.sensor_samples: list[tuple[float, dict]] = []
         self.first: dict = {}
         self.last_at = -1e18
+        self.last_sensor_at = -1e18
         self.started = 0.0
 
     def start(self, now: float) -> None:
@@ -454,21 +506,58 @@ class Sampler:
         self.first = self.reader()
         self.samples = [(now, self.first)]
         self.last_at = now
+        self.sensor_samples = []
+        self.last_sensor_at = -1e18
+        self._sense(now)
 
     def sample(self, now: float) -> None:
         if now - self.last_at >= self.interval:
             self.last_at = now
             self.samples.append((now, self.reader()))
+        if now - self.last_sensor_at >= self.sensor_interval:
+            self._sense(now)
+
+    def _sense(self, now: float) -> None:
+        self.last_sensor_at = now
+        try:
+            reading = self.sensor_reader()
+        except Exception:                           # a sensor that cannot be read is simply missing from the run
+            return
+        if isinstance(reading, dict) and reading:
+            self.sensor_samples.append((now, reading))
 
     def finish(self, now: float, game_env: Optional[dict] = None) -> dict:
         last = self.reader()
         self.samples.append((now, last))
+        self._sense(now)
         return self.summary(game_env, last)
 
     # -- condensing --
 
     def _series(self, section: str, key: str) -> list[float]:
         return [s[section][key] for _, s in self.samples if isinstance(s.get(section, {}).get(key), (int, float))]
+
+    def sensors(self) -> dict:
+        """Mean / peak of every sensor and a condensed series of each (what the site draws as GPU load and clock)."""
+        out: dict = {}
+        series: dict = {}
+        longest = 0
+        for key, label, unit in SENSOR_STATS:
+            values = [r[key] for _, r in self.sensor_samples if isinstance(r.get(key), (int, float))]
+            if not values:
+                continue
+            out[f"{label}_avg_{unit}"] = _round(sum(values) / len(values), 1)
+            out[f"{label}_max_{unit}"] = _round(max(values), 1)
+            series[key] = _condense(values)
+            longest = max(longest, len(series[key]))
+        if not series:
+            return {}
+        times = [t for t, _ in self.sensor_samples]
+        span = times[-1] - times[0]
+        out["samples"] = len(self.sensor_samples)
+        out["step_s"] = _round(span / (longest - 1), 1) if longest > 1 and span > 0 else None
+        out["series"] = series
+        return _drop_empty(out)
 
     def summary(self, game_env: Optional[dict] = None, last: Optional[dict] = None) -> dict:
         first = self.first or {}
@@ -521,6 +610,7 @@ class Sampler:
             "limits": limits,
             "display": display,
             "device": read_device(self.root),
+            "sensors": self.sensors(),
         }
         env = read_launch_env(game_env if game_env is not None else self.environ)
         if env:
