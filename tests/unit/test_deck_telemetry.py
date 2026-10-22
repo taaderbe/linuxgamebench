@@ -456,3 +456,65 @@ def test_a_bare_system_gives_an_empty_software_section(tmp_path):
 def test_arch_style_package_database_is_the_fallback(tmp_path):
     put(tmp_path, "var/lib/pacman/local/mesa-25.0.1-1/desc", "x")
     assert telemetry.read_software(tmp_path, tmp_path / "home/deck")["mesa"] == "25.0.1"
+
+
+# ----- CPU load per core (/proc/stat) -----
+
+def stat(cores):
+    """A /proc/stat with (busy, idle) jiffies for the whole CPU (the sum) and for every core."""
+    rows = [("cpu", sum(b for b, _ in cores), sum(i for _, i in cores))] + [(f"cpu{n}", b, i) for n, (b, i) in enumerate(cores)]
+    return "\n".join(f"{name} {busy} 0 0 {idle} 0 0 0 0 0 0" for name, busy, idle in rows) + "\nintr 1 2 3\n"
+
+
+def test_cpu_load_per_core_comes_from_the_change_between_two_readings(tmp_path):
+    put(tmp_path, "proc/stat", stat([(100, 100), (100, 100)]))
+    load = telemetry.CpuLoad(tmp_path)
+    assert load.read() == {}, "the first reading only sets the start point"
+    put(tmp_path, "proc/stat", stat([(190, 110), (120, 180)]))          # core 0: 90 busy of 100, core 1: 20 of 100
+    assert load.read() == {"cpu_load_pct": 55.0, "cpu_cores_pct": [90.0, 20.0], "cpu_core_max_pct": 90.0}
+
+
+def test_cores_are_ordered_by_number_not_by_text(tmp_path):
+    cores = [(0, 0)] * 11
+    put(tmp_path, "proc/stat", stat(cores))
+    load = telemetry.CpuLoad(tmp_path)
+    load.read()
+    put(tmp_path, "proc/stat", stat([(10, 0)] + [(0, 10)] * 9 + [(5, 5)]))
+    assert load.read()["cpu_cores_pct"] == [100.0] + [0.0] * 9 + [50.0], "cpu10 comes after cpu9"
+
+
+def test_no_proc_stat_means_no_cpu_values(tmp_path):
+    load = telemetry.CpuLoad(tmp_path)
+    assert load.read() == {} and load.read() == {}
+
+
+def test_a_recording_keeps_cpu_mean_peak_per_core_and_the_busiest_core(tmp_path):
+    readings = [{"gpu_load_pct": 50, "cpu_load_pct": 20.0 + i % 2 * 10, "cpu_core_max_pct": 80.0 + i % 2 * 20,
+                 "cpu_cores_pct": [80.0 + i % 2 * 20, 10.0, 0.0, 10.0]} for i in range(61)]
+    sensors = recording(readings)["sensors"]
+    assert sensors["cpu_load_avg_pct"] == pytest.approx(25, abs=1) and sensors["cpu_load_max_pct"] == 30
+    assert sensors["cpu_core_max_avg_pct"] == pytest.approx(90, abs=1) and sensors["cpu_core_max_max_pct"] == 100
+    assert sensors["cpu_cores_avg_pct"][0] == pytest.approx(90, abs=1) and sensors["cpu_cores_avg_pct"][1:] == [10.0, 0.0, 10.0]
+    assert sensors["cpu_cores_max_pct"] == [100.0, 10.0, 0.0, 10.0]
+    assert {"cpu_load_pct", "cpu_core_max_pct"} <= set(sensors["series"]) and "cpu_cores_pct" not in sensors["series"]
+
+
+def test_the_sampler_reads_cpu_load_itself_on_a_fake_deck(tmp_path):
+    add_sensors(build_deck(tmp_path))
+    put(tmp_path, "proc/stat", stat([(0, 0)] * 4))
+    sampler = telemetry.Sampler(tmp_path, reader=lambda: snap())
+    sampler.start(0.0)
+    for second in range(1, 5):
+        put(tmp_path, "proc/stat", stat([(second * 50, second * 50), (second * 10, second * 90), (0, second * 100), (0, second * 100)]))
+        sampler.sample(float(second))
+    sensors = sampler.finish(5.0)["sensors"]
+    assert sensors["cpu_cores_avg_pct"] == [50.0, 10.0, 0.0, 0.0] and sensors["cpu_core_max_avg_pct"] == 50.0
+    assert sensors["cpu_load_avg_pct"] == 15.0
+
+
+def test_waiting_for_the_disk_counts_as_idle(tmp_path):
+    put(tmp_path, "proc/stat", "cpu 0 0 0 0 0 0 0 0 0 0\ncpu0 0 0 0 0 0 0 0 0 0 0\n")
+    load = telemetry.CpuLoad(tmp_path)
+    load.read()
+    put(tmp_path, "proc/stat", "cpu 30 0 0 20 50 0 0 0 0 0\ncpu0 30 0 0 20 50 0 0 0 0 0\n")      # user 30, idle 20, iowait 50
+    assert load.read()["cpu_load_pct"] == 30.0, "iowait is time the core had nothing to run"

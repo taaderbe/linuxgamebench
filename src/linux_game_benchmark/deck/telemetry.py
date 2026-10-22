@@ -209,9 +209,56 @@ def read_sensors(root: Path) -> dict:
     return {k: v for k, v in out.items() if v is not None}
 
 
+def _cpu_times(root: Path) -> dict:
+    """{"cpu": (busy, total), "cpu0": (busy, total), ...} in jiffies since boot, from /proc/stat."""
+    out: dict = {}
+    for line in (_read(root / "proc/stat") or "").splitlines():
+        parts = line.split()
+        if not parts or not parts[0].startswith("cpu") or len(parts) < 5:
+            continue
+        try:
+            values = [int(v) for v in parts[1:9]]              # user nice system idle iowait irq softirq steal (guest is inside user)
+        except ValueError:
+            continue
+        total = sum(values)
+        out[parts[0]] = (total - values[3] - (values[4] if len(values) > 4 else 0), total)
+    return out
+
+
+class CpuLoad:
+    """CPU load since the previous reading: the whole CPU, every core and the busiest core (a game held back by one thread
+    shows a busy core while the average stays low). The first reading only sets the start point."""
+
+    def __init__(self, root: str | Path = "/"):
+        self.root = Path(root)
+        self.previous: dict = {}
+
+    def read(self) -> dict:
+        now = _cpu_times(self.root)
+        before, self.previous = self.previous, now
+
+        def pct(name: str) -> Optional[float]:
+            if name not in now or name not in before:
+                return None
+            busy, total = now[name][0] - before[name][0], now[name][1] - before[name][1]
+            return None if total <= 0 else _round(min(max(100.0 * busy / total, 0.0), 100.0), 1)
+
+        cores = [pct(name) for name in sorted((n for n in now if n != "cpu"), key=lambda n: int(n[3:]) if n[3:].isdigit() else 999)]
+        out: dict = {}
+        whole = pct("cpu")
+        if whole is not None:
+            out["cpu_load_pct"] = whole
+        if cores and all(c is not None for c in cores):
+            out["cpu_cores_pct"] = cores
+            out["cpu_core_max_pct"] = max(cores)
+        return out
+
+
 # (reading key, label of the summary values, unit suffix)
 SENSOR_STATS = (("gpu_load_pct", "gpu_load", "pct"), ("gpu_clock_mhz", "gpu_clock", "mhz"), ("apu_temp_c", "apu_temp", "c"),
-                ("apu_power_w", "apu_power", "w"), ("fan_rpm", "fan", "rpm"))
+                ("apu_power_w", "apu_power", "w"), ("fan_rpm", "fan", "rpm"),
+                ("cpu_load_pct", "cpu_load", "pct"), ("cpu_core_max_pct", "cpu_core_max", "pct"))
+MAX_CORES = 64                  # per-core values are kept for at most this many cores
 
 
 def _condense(values: list[float], points: int = MAX_SERIES_POINTS) -> list[float]:
@@ -490,7 +537,8 @@ class Sampler:
                  sensor_reader: Optional[Callable[[], dict]] = None, sensor_interval: float = SENSOR_INTERVAL):
         self.root = Path(root)
         self.reader = reader or (lambda: snapshot(self.root))
-        self.sensor_reader = sensor_reader or (lambda: read_sensors(self.root))
+        self.cpu = CpuLoad(self.root)
+        self.sensor_reader = sensor_reader or (lambda: {**read_sensors(self.root), **self.cpu.read()})
         self.interval = interval
         self.sensor_interval = sensor_interval
         self.environ = environ
@@ -552,6 +600,12 @@ class Sampler:
             longest = max(longest, len(series[key]))
         if not series:
             return {}
+        cores = [r["cpu_cores_pct"] for _, r in self.sensor_samples if isinstance(r.get("cpu_cores_pct"), list) and r["cpu_cores_pct"]]
+        width = len(cores[-1]) if cores else 0
+        cores = [c for c in cores if len(c) == width][:] if 0 < width <= MAX_CORES else []
+        if cores:                                   # per core: mean and peak over the recording (same core count in every reading)
+            out["cpu_cores_avg_pct"] = [_round(sum(c[i] for c in cores) / len(cores), 1) for i in range(width)]
+            out["cpu_cores_max_pct"] = [_round(max(c[i] for c in cores), 1) for i in range(width)]
         times = [t for t, _ in self.sensor_samples]
         span = times[-1] - times[0]
         out["samples"] = len(self.sensor_samples)
