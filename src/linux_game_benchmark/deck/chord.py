@@ -21,7 +21,7 @@ import struct
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Callable, Iterable, Optional
 
 EV_KEY = 1
 
@@ -234,17 +234,47 @@ def find_deck_hidraw(sys_root: str = "/sys/class/hidraw", dev_root: str = "/dev"
     return found
 
 
+def user_manager_cgroup(cgroup_file: str = "/proc/self/cgroup", cgroup_root: str = "/sys/fs/cgroup") -> Optional[Path]:
+    """The cgroup of the systemd user manager this process runs under (.../user@1000.service), None outside one."""
+    try:
+        line = next(x for x in Path(cgroup_file).read_text().splitlines() if x.startswith("0::"))
+    except (OSError, StopIteration):
+        return None
+    parts = line[3:].strip("/").split("/")
+    for i, part in enumerate(parts):
+        if part.startswith("user@") and part.endswith(".service"):
+            return Path(cgroup_root, *parts[:i + 1])
+    return None
+
+
+def game_or_desktop(manager: Optional[Path]) -> bool:
+    """Is the Deck's own controller worth reading now? Not in Game Mode while no game runs - Steam starts every game there in
+    its own app-steam-app<id>-<pid>.scope, so in the menus the reader costs nothing (0.03 % instead of 0.2 % of a core).
+    Desktop Mode: always (games may start outside Steam there). Anything unknown: yes - a chord must never be lost."""
+    if manager is None:
+        return True
+    try:
+        if not (manager / "session.slice" / "gamescope-session.service").is_dir():
+            return True
+        return any((manager / "app.slice").glob("app-steam-app*.scope"))
+    except OSError:
+        return True
+
+
 class GamepadReader:
     """Reads key events of all gamepads; devices that come and go (Steam re-creates its virtual pad) are re-scanned.
 
     The Deck's own controller (hidraw) gives the physical buttons, the evdev pads give what Steam Input passes on. Both feed
-    the same events - ChordTracker / ChordLearner ignore a second "down" of a button that is already held.
+    the same events - ChordTracker / ChordLearner ignore a second "down" of a button that is already held. `hid_wanted`
+    (asked at every rescan) lets the service read the controller only while it can matter (game_or_desktop).
     """
 
     def __init__(self, devices_file: str = "/proc/bus/input/devices", hidraw_root: str = "/sys/class/hidraw",
-                 dev_root: str = "/dev"):
+                 dev_root: str = "/dev", hid_wanted: Optional[Callable[[], bool]] = None):
         self._devices_file = devices_file
         self._hidraw_root, self._dev_root = hidraw_root, dev_root
+        self._hid_wanted = hid_wanted
+        self._pending: list[tuple[int, int]] = []        # releases of a controller closed by rescan, handed out by read()
         self._fds: dict[str, int] = {}
         self._hid: set[str] = set()                      # which of the open paths are the Deck's controller (hidraw)
         self._held: dict[str, frozenset[int]] = {}       # hidraw: buttons held in its last report
@@ -261,11 +291,12 @@ class GamepadReader:
             wanted = {path for _, path in find_gamepads(text)}
         except OSError:
             wanted = {path for path in self._fds if path not in self._hid}
-        hid = set(find_deck_hidraw(self._hidraw_root, self._dev_root))
+        use_hid = self._hid_wanted is None or self._hid_wanted()
+        hid = set(find_deck_hidraw(self._hidraw_root, self._dev_root)) if use_hid else set()
         wanted |= hid
         for path in list(self._fds):
             if path not in wanted:
-                self._close(path)
+                self._pending.extend((code, 0) for code in sorted(self._close(path)))
         self.denied = []
         for path in sorted(wanted - set(self._fds)):
             try:
@@ -317,6 +348,9 @@ class GamepadReader:
     def read(self, timeout: float) -> list[tuple[int, int]]:
         """Key events of all devices, waiting up to `timeout` for the first one. The Deck's controller reports ~250 times a
         second without any change; such a report does not end the wait (the service loop would spin otherwise)."""
+        if self._pending:
+            events, self._pending = self._pending, []
+            return events
         if not self._fds:
             return []
         end = time.monotonic() + timeout

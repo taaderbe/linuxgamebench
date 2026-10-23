@@ -90,3 +90,15 @@ def test_the_api_client_forwards_the_dmi_strings(tmp_path, monkeypatch):
     system = http.__enter__.return_value.post.call_args.kwargs["json"]["system"]
     assert (system["device_vendor"], system["device_product"], system["device_version"]) == ("LENOVO", "83E1", "Legion Go 8APU1")
     assert system["device_class"] == "legion_go"
+
+
+def test_the_proton_the_recorder_found_goes_into_the_runs_proton_fields():
+    """The site's tables, filters and share cards read proton_build / proton_tool - device_state alone left them empty (PROD run 1059)."""
+    state = {"software": {"compat": "proton", "proton": "Proton 11.0", "proton_build": "proton-11.0-2e-x86_64", "proton_source": "steam"}}
+    assert upload.proton_of(state) == {"proton_build": "proton-11.0-2e-x86_64", "proton_tool": "Proton 11.0"}
+    flat = upload.flatten_system(SYSTEM, DeckInfo(is_deck=True, model="LCD"), upload.proton_of(state))
+    assert (flat["proton_build"], flat["proton_tool"]) == ("proton-11.0-2e-x86_64", "Proton 11.0")
+    assert upload.proton_of({"software": {"compat": "native"}}) is None
+    assert upload.proton_of({"software": {"compat": "proton", "proton": "GE-Proton9-20"}}) is None, "a custom build without a build name"
+    assert upload.proton_of(None) is None and upload.proton_of({}) is None
+    assert "proton_build" not in upload.flatten_system(SYSTEM, DeckInfo(is_deck=True, model="LCD"), None)

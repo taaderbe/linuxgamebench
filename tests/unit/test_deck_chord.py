@@ -1,6 +1,7 @@
 """Controller chord: parsing, hold-two-press-one detection, learning, gamepad discovery, raw events."""
 
 import struct
+from pathlib import Path
 
 import pytest
 
@@ -242,3 +243,55 @@ def test_the_same_press_from_the_virtual_pad_and_the_controller_triggers_once():
     learner = ChordLearner()
     found = [learner.feed(code, value) for code, value in feed]
     assert [f for f in found if f] == [Chord(hold=(LB, RB), press=VIEW)]
+
+
+# ----- the controller is read only while a game can run (in the Game Mode menus it would cost 0.2 % of a core for nothing) -----
+
+def test_the_user_manager_is_found_from_the_own_cgroup(tmp_path):
+    from linux_game_benchmark.deck.chord import user_manager_cgroup
+    cg = tmp_path / "cgroup"
+    cg.write_text("0::/user.slice/user-1000.slice/user@1000.service/app.slice/lgb-deck.service\n")
+    assert user_manager_cgroup(str(cg), "/sys/fs/cgroup") == Path("/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service")
+    cg.write_text("0::/system.slice/sshd.service\n")
+    assert user_manager_cgroup(str(cg)) is None
+    assert user_manager_cgroup(str(tmp_path / "missing")) is None
+
+
+def test_the_controller_is_wanted_in_a_game_and_on_the_desktop_but_not_in_the_game_mode_menus(tmp_path):
+    from linux_game_benchmark.deck.chord import game_or_desktop
+    manager = tmp_path / "user@1000.service"
+    (manager / "app.slice").mkdir(parents=True)
+    assert game_or_desktop(manager) is True, "Desktop Mode: always (games may start outside Steam)"
+    (manager / "session.slice" / "gamescope-session.service").mkdir(parents=True)
+    assert game_or_desktop(manager) is False, "Game Mode, Steam's menus: nothing to record"
+    (manager / "app.slice" / "app-steam-app1366540-17443.scope").mkdir()
+    assert game_or_desktop(manager) is True, "Game Mode with a game running"
+    assert game_or_desktop(None) is True, "unknown: read it, never lose a chord"
+
+
+def test_a_controller_closed_between_games_releases_its_buttons(tmp_path):
+    import os
+    from linux_game_benchmark.deck.chord import GamepadReader
+    sys_root, dev_root = fake_hidraw(tmp_path, ["0003:000028DE:00001205"])
+    pipe = dev_root / "hidraw0"
+    os.mkfifo(pipe)
+    devices = tmp_path / "devices"
+    devices.write_text("")
+    in_game = {"now": True}
+    reader = GamepadReader(str(devices), str(sys_root), str(dev_root), hid_wanted=lambda: in_game["now"])
+    try:
+        assert reader.rescan() == [str(pipe)]
+        writer = os.open(pipe, os.O_WRONLY)
+        try:
+            os.write(writer, deck_report(L1_BIT, R1_BIT))
+            assert reader.read(1.0) == [(LB, 1), (RB, 1)]
+            in_game["now"] = False                              # the game ended while L1 + R1 were held
+            assert reader.rescan() == []
+            assert reader.read(0.1) == [(LB, 0), (RB, 0)], "no button stays 'held' in the tracker"
+            assert reader.read(0.1) == []
+            in_game["now"] = True
+            assert reader.rescan() == [str(pipe)]
+        finally:
+            os.close(writer)
+    finally:
+        reader.close()

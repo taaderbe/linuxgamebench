@@ -16,7 +16,7 @@ from linux_game_benchmark.deck import config as deck_config
 from linux_game_benchmark.deck import setup as deck_setup
 from linux_game_benchmark.deck.overview import chord_words
 from linux_game_benchmark.deck.chord import (
-    ChordLearner, GamepadReader, chord_label, format_chord, parse_chord,
+    ChordLearner, GamepadReader, chord_label, game_or_desktop, user_manager_cgroup, format_chord, parse_chord,
 )
 from linux_game_benchmark.deck.detect import detect_steam_deck
 
@@ -203,7 +203,8 @@ def run() -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stopping.update(flag=True))
 
-    reader = GamepadReader()
+    manager = user_manager_cgroup()
+    reader = GamepadReader(hid_wanted=lambda: game_or_desktop(manager))   # the Deck's own buttons only while a game can run
     service = DeckService(
         cfg, deck,
         queue=Queue(deck_config.queue_dir()),

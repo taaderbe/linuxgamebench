@@ -56,6 +56,15 @@ def flatten_system(system_info: dict, deck: DeckInfo, proton: Optional[dict] = N
     return flat
 
 
+def proton_of(device_state: Optional[dict]) -> Optional[dict]:
+    """The run's Proton fields from what the recorder found out about the launch (device_state.software); the tables, filters
+    and share cards on the site read these fields, not device_state (PROD run 1059 had none, 2026-10-23)."""
+    software = (device_state or {}).get("software") or {}
+    if software.get("compat") != "proton" or not software.get("proton_build"):
+        return None
+    return {"proton_build": software["proton_build"], "proton_tool": software.get("proton")}
+
+
 def flatten_metrics(metrics: dict) -> dict:
     fps = metrics.get("fps", {})
     return {
@@ -119,7 +128,7 @@ def prepare(segment: Path, game: dict, deck: DeckInfo, system_info: Optional[dic
         "steam_app_id": 0 if non_steam else int(game["app_id"]),
         "game_name": game["name"],
         "resolution": game_resolution(analyzer, device_state),
-        "system_info": flatten_system(system_info, deck),
+        "system_info": flatten_system(system_info, deck, proton_of(device_state)),
         "metrics": flatten_metrics(metrics),
         "frametimes": frametimes or None,
         "mangohud_log_compressed": compress_log(segment),
