@@ -26,6 +26,16 @@ All notable changes to Linux Game Bench will be documented here.
 - Open drop-down lists are readable on every page (they were white on white)
 - A Steam Deck run opened from a list now opens that run, not an unrelated PC benchmark
 
+## 2026-10-23
+
+Website update only — no new client version, nothing to install.
+
+### Fixed
+- Game, GPU, CPU, profile and FAQ pages no longer jump around while they load
+
+### Changed
+- Amazon partner links are now marked "Ad" right next to the link
+
 ## 2026-10-08
 
 Website update only — no new client version, nothing to install.
