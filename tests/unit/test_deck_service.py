@@ -1121,3 +1121,21 @@ def test_a_shortcut_to_the_emulator_itself_is_kept_not_uploaded(auto):
     auto.service.tick(T0 + 81)
     assert auto.sent == [] and auto.statuses() == ["failed"]
     assert "starts other games" in auto.said[-1]
+
+
+def test_the_status_file_is_written_on_a_change_and_otherwise_every_ten_seconds(auto, tmp_path):
+    """Written at every tick (2-4 a second) before - most of the service's CPU while nothing happens (0.15 % of a core)."""
+    import json as _json
+    status = tmp_path / "status.json"
+    auto.service.status_file = status
+    written = lambda: _json.loads(status.read_text())["time"]
+    auto.service.tick(T0)
+    assert written() == T0
+    auto.service.tick(T0 + 0.5)
+    auto.service.tick(T0 + 9.0)
+    assert written() == T0, "nothing changed: not written again"
+    auto.service.tick(T0 + 10.5)
+    assert written() == T0 + 10.5, "the GUI calls a recorder alive for 30 s: a sign of life every 10 s"
+    auto.chord(T0 + 11)
+    auto.service.tick(T0 + 11.2)
+    assert written() == T0 + 11.2 and _json.loads(status.read_text())["phase"] == "recording", "a change is written at once"

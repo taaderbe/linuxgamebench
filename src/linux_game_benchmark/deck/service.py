@@ -43,6 +43,7 @@ GAME_CLOSED = "the game was closed during the recording - nothing saved"
 LOG_ENDED = "Steam's performance overlay was changed during the recording, which ended the log - nothing saved"
 FOCUS_LOSS_LIMIT = 5.0                   # the overlay program logs what is in front: more than this away from the game spoils the minute
 LOG_WAIT_SECONDS = 3.0                   # how long the overlay program may take to open the log file it was told to start
+STATUS_EVERY_SECONDS = 10.0              # status.json: at once on a change, else this often (the GUI calls a recorder alive < 30 s)
 STOP_RETRY_SECONDS = 5.0                 # a log that could not be ended is ended again this often
 SUMMARY_HIDE_SECONDS = deck_mangoapp.SUMMARY_SECONDS + 0.8   # the overlay stays hidden while MangoHud's end-of-log summary would show
 
@@ -117,6 +118,7 @@ class DeckService:
         self._newest_log, self._identify, self._cut = newest_log, identify, cut
         self._wait_flushed, self._prepare, self._send = wait_flushed, prepare, send
         self.status_file = status_file
+        self._status_written: tuple = (None, -1e9)       # (content without the time, when) of the last status.json
         self._sampler_factory, self._read_env = sampler_factory, read_env
         self._read_software = read_software or _default_software
         self._read_display = read_display or _default_display
@@ -591,10 +593,15 @@ class DeckService:
         if not self.status_file:
             return
         data = {
-            "time": now, "phase": self.session.phase.value, "message": self.last_message,
+            "phase": self.session.phase.value, "message": self.last_message,
             "chord": self.config.chord, "deck": self.deck.device_class,
-            "recording_for": round(now - self.session._start, 1) if self.session.phase.value == "recording" else 0,
+            "recording_for": round(now - self.session._start) if self.session.phase.value == "recording" else 0,
         }
+        last, written_at = self._status_written
+        if data == last and now - written_at < STATUS_EVERY_SECONDS:
+            return                                   # written 2-4 times a second before: most of the service's idle CPU
+        self._status_written = (dict(data), now)
+        data = {"time": now, **data}
         try:
             self.status_file.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.status_file.with_name(self.status_file.name + ".tmp")
