@@ -24,7 +24,6 @@ All notable changes to Linux Game Bench will be documented here.
 ### Fixed
 - An expired login no longer bounces between the login page and the previous page; "Log in" returns you to the page you were on
 - Open drop-down lists are readable on every page (they were white on white)
-- Many pages no longer scroll sideways on phones (profile, admin, My Benchmarks, footer tip)
 - A Steam Deck run opened from a list now opens that run, not an unrelated PC benchmark
 
 ## 2026-10-08
