@@ -2,6 +2,31 @@
 
 All notable changes to Linux Game Bench will be documented here.
 
+## 2026-10-23
+
+### Added
+- Steam Deck support: one-click install from linuxgamebench.com/steamdeck (or one terminal line), then hold L1 + R1 and press VIEW in any game to record 60 seconds - the run uploads by itself
+- Linking an account is optional: Deck runs can be uploaded anonymously, or linked later with a short code on linuxgamebench.com/link
+- Other handhelds (beta, not tested on real devices yet): ROG Ally, Legion Go, MSI Claw, AYANEO, GPD and ONEXPLAYER are recognised and get their own /handhelds page
+- Steam Deck page with the latest Deck runs, a sortable game list and side-by-side comparison of two runs (FPS chart, time on pace, power draw, efficiency, battery used)
+- Deck runs record the device itself: GPU / CPU load and clock, load per CPU core, temperatures, power (whole Deck, APU, CPU, GPU), memory, disk reads, throttling, battery, fan, TDP, render resolution, refresh rate and shader cache
+- Handheld runs are rated against their own frame rate (a steady 30 or 40 FPS is no longer "Poor"), with hitches of 100 ms and more counted from the raw log
+- Non-Steam games (emulators, Heroic "Add to Steam", own builds) are recognised by their Steam shortcut name and listed as "(Non-Steam)"
+- How-to video for the Deck in English and German
+- Hall of Fame on the leaderboard with each contributor's favourite game and main GPU
+
+### Changed
+- Benchmark details on the home page now use cards like My Benchmarks: stat tiles, GPU and CPU charts side by side, hardware stats per row; compare mode shows Main, Compare and the difference
+- My Benchmarks shows CPU load (it was recorded but not shown) and, for handheld runs, the device panel and sensor charts
+- Redesigned GPU, CPU and game pages, the GPU compare view, the profile page, account settings, login / register and the legal pages
+- The FAQ has distro tabs, numbered steps and a contents list
+
+### Fixed
+- An expired login no longer bounces between the login page and the previous page; "Log in" returns you to the page you were on
+- Open drop-down lists are readable on every page (they were white on white)
+- Many pages no longer scroll sideways on phones (profile, admin, My Benchmarks, footer tip)
+- A Steam Deck run opened from a list now opens that run, not an unrelated PC benchmark
+
 ## 2026-10-08
 
 Website update only — no new client version, nothing to install.
