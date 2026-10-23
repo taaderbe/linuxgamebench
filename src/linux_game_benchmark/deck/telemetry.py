@@ -823,8 +823,7 @@ class Sampler:
         self.cpu = CpuLoad(self.root)
         self.io = IoLoad(self.root)
         self.gpu: Optional[GpuBusy] = GpuBusy(self.root) if sensor_reader is None and gpu_busy else None
-        self.sensor_reader = sensor_reader or (lambda: {**read_sensors(self.root), **read_memory(self.root), **read_battery_now(self.root),
-                                                        **self.cpu.read(), **self.io.read(), **(self.gpu.take() if self.gpu else {})})
+        self.sensor_reader = sensor_reader or self._read_sensors
         self.interval = interval
         self.sensor_interval = sensor_interval
         self.environ = environ
@@ -834,6 +833,16 @@ class Sampler:
         self.last_at = -1e18
         self.last_sensor_at = -1e18
         self.started = 0.0
+
+    def _read_sensors(self) -> dict:
+        out = {**read_sensors(self.root), **read_memory(self.root), **read_battery_now(self.root), **self.cpu.read(), **self.io.read()}
+        if self.gpu is not None and self.gpu.thread is not None:
+            quick = self.gpu.take()
+            if "gpu_load_pct" not in quick:            # the first moment of a recording: too few quick readings yet, and the
+                for key in ("gpu_load_pct", "gpu_clock_mhz", "gpu_load_source"):   # momentary one is 0 or 100 - nothing for it
+                    out.pop(key, None)
+            out.update(quick)
+        return out
 
     def start(self, now: float) -> None:
         self.started = now

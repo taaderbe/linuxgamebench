@@ -786,3 +786,20 @@ def test_a_dropped_recording_ends_its_thread_by_itself(tmp_path):
 def test_sampled_wins_over_the_table_and_the_table_over_momentary():
     assert recording([{"gpu_load_pct": 60.0, "gpu_load_source": "metrics"}, {"gpu_load_pct": 62.0, "gpu_load_source": "sampled"}] * 3)["sensors"]["gpu_load_source"] == "sampled"
     assert recording([{"gpu_load_pct": 60.0, "gpu_load_source": "metrics"}, {"gpu_load_pct": 100.0}] * 3)["sensors"]["gpu_load_source"] == "metrics"
+
+
+def test_the_first_moment_without_enough_quick_readings_leaves_the_gpu_load_out(tmp_path):
+    add_sensors(build_deck(tmp_path))
+    sampler = telemetry.Sampler(tmp_path)
+    sampler.gpu.interval = 60                                               # the thread takes no reading before the first sample
+    sampler.start(0.0)
+    try:
+        first = sampler.sensor_samples[0][1]
+        assert "gpu_load_pct" not in first and "gpu_clock_mhz" not in first and "gpu_load_source" not in first
+        assert first["apu_temp_c"] == 61.0, "the other values are still read"
+        for _ in range(3):
+            sampler.gpu.poll()
+        sampler.sample(sampler.sensor_interval + 1)
+        assert sampler.sensor_samples[-1][1]["gpu_load_source"] == "sampled"
+    finally:
+        sampler.gpu.stop()
