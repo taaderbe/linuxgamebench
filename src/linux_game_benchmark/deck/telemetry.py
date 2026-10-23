@@ -12,6 +12,7 @@ MAC addresses, account names) is read. `root` lets the tests point the readers a
 from __future__ import annotations
 
 import os
+import random
 import re
 import struct
 import threading
@@ -290,15 +291,18 @@ def read_sensors(root: Path) -> dict:
 
 
 class GpuBusy:
-    """GPU load and clock as the mean of quick readings (10 a second) since the previous take().
+    """GPU load and clock as the mean of quick readings (about 50 a second, at random spacing) since the previous take().
 
     gpu_busy_percent is a momentary 0 / 100 reading, and the "average" in gpu_metrics only covers the time since anyone
     last read the table - Steam's overlay program reads it too, so a reading right after it covers a few milliseconds
-    (seen on the real Deck: 65 % one second, 0 or 100 % the next). Our own quick readings do not depend on anyone else."""
+    (seen on the real Deck: 65 % one second, 0 or 100 % the next). Our own quick readings do not depend on anyone else.
+    The momentary reading flips between 0 and 100 about twice a second in a steady rhythm: readings at a fixed 0.1 s hit
+    the same spot of that rhythm again and again (Build 33 on the Deck: whole seconds of 100 % next to 15 %), so the gap
+    between readings is random. Measured on the Deck: one reading of both files costs ~73 us, 50 a second ~0.4 % of a core."""
 
     IDLE_STOP = 10.0                    # nobody took a reading for this long (a recording dropped without finish): the thread ends
 
-    def __init__(self, root: str | Path = "/", interval: float = 0.1, clock: Callable[[], float] = time.monotonic):
+    def __init__(self, root: str | Path = "/", interval: float = 0.02, clock: Callable[[], float] = time.monotonic):
         self.root = Path(root)
         self.interval = interval
         self.clock = clock
@@ -334,8 +338,11 @@ class GpuBusy:
             out["gpu_clock_mhz"] = round(sum(clocks) / len(clocks))
         return out
 
+    def next_wait(self) -> float:
+        return self.interval * random.uniform(0.5, 1.5)
+
     def _run(self) -> None:
-        while not self.stop_event.wait(self.interval):
+        while not self.stop_event.wait(self.next_wait()):
             if self.clock() - self.last_take > self.IDLE_STOP:
                 break
             try:

@@ -733,6 +733,14 @@ def test_quick_readings_give_the_mean_load_and_clock_since_the_last_take(tmp_pat
     assert gpu.take() == {}, "taken readings are gone"
 
 
+def test_the_gap_between_quick_readings_is_random_around_the_interval(tmp_path):
+    gpu = telemetry.GpuBusy(tmp_path)
+    waits = [gpu.next_wait() for _ in range(400)]
+    assert all(0.5 * gpu.interval <= w <= 1.5 * gpu.interval for w in waits)
+    assert len(set(waits)) > 300, "a fixed gap meets the same spot of the GPU's on / off rhythm every time"
+    assert abs(sum(waits) / len(waits) - gpu.interval) < 0.1 * gpu.interval
+
+
 def test_too_few_quick_readings_say_nothing(tmp_path):
     add_sensors(build_deck(tmp_path))
     gpu = telemetry.GpuBusy(tmp_path)
