@@ -207,6 +207,7 @@ DECK_BUTTON_BITS: dict[tuple[int, int], int] = {
     (13, 1): BUTTONS["L4"], (13, 2): BUTTONS["R4"],
 }
 _HID_REPORT_SIZE = 64
+HID_BATCH = 0.1                 # read the controller's reports in batches: ~25 at 250 a second, the kernel buffers 64 (0.2 % of a core)
 
 
 def deck_buttons(report: bytes) -> Optional[frozenset[int]]:
@@ -247,6 +248,7 @@ class GamepadReader:
         self._fds: dict[str, int] = {}
         self._hid: set[str] = set()                      # which of the open paths are the Deck's controller (hidraw)
         self._held: dict[str, frozenset[int]] = {}       # hidraw: buttons held in its last report
+        self._raw: dict[str, bytes] = {}                 # hidraw: button bytes of its last report
         self.denied: list[str] = []         # devices we are not allowed to read
 
     @property
@@ -282,6 +284,7 @@ class GamepadReader:
         fd = self._fds.pop(path, None)
         self._hid.discard(path)
         held = self._held.pop(path, frozenset())
+        self._raw.pop(path, None)
         if fd is not None:
             try:
                 os.close(fd)
@@ -299,9 +302,12 @@ class GamepadReader:
                 break
             if not report:
                 break
+            if report[8:14] == self._raw.get(path) and report[2:3] == b"\x09":
+                continue                                 # nearly every report: same buttons as before
             now = deck_buttons(report)
             if now is None:
                 continue
+            self._raw[path] = report[8:14]
             before = self._held.get(path, frozenset())
             events.extend((code, 0) for code in sorted(before - now))
             events.extend((code, 1) for code in sorted(now - before))
@@ -333,6 +339,10 @@ class GamepadReader:
                         events.extend((code, 0) for code in sorted(self._close(path)))   # gone: nothing is held any more
             if events or not ready or time.monotonic() >= end or not self._fds:
                 return events
+            if any(fd in ready for path, fd in self._fds.items() if path in self._hid):
+                # let the reports pile up instead of waking 250 times a second (2 % of a core -> 0.2 %, measured on a Deck); the kernel keeps
+                # 64 of them, so no press is lost, it only arrives up to HID_BATCH later
+                time.sleep(min(HID_BATCH, max(0.0, end - time.monotonic())))
 
     def close(self) -> None:
         for path in list(self._fds):
