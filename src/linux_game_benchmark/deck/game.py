@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import re
+import shlex
+import struct
 import time
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -17,6 +20,159 @@ class GameInfo:
     app_id: int
     name: str
     pid: Optional[int] = None         # the process that writes the log (its environment holds the launch options)
+    launcher: Optional[str] = None    # a shortcut (no Steam app): what starts it - "RPCS3", "eden", "Heroic (GOG)"
+
+    @property
+    def non_steam(self) -> bool:
+        return is_shortcut(self.app_id)
+
+
+# ----- shortcuts: games added to Steam that are no Steam app (emulators, Heroic, own builds) --------------------------------
+
+UNKNOWN_SHORTCUT = "Non-Steam game"   # a shortcut in no list: never uploaded under this name (all of them would become one game)
+SHORTCUT_MIN_ID = 1 << 31             # Steam gives a shortcut crc32(exe + name) | 0x80000000; store app ids are far below
+_HEROIC_STORES = {"legendary": "Epic", "gog": "GOG", "nile": "Amazon", "sideload": "sideload"}
+_HEROIC_URL = re.compile(r"heroic://launch(?:/(\w+)/|\?[^\s\"']*?runner=(\w+))", re.IGNORECASE)
+_EXTENSIONS = re.compile(r"\.(sh|exe|appimage|x86_64|x86|bin|py|bat|desktop)$", re.IGNORECASE)
+_NOT_PLAIN = re.compile(r"[^A-Za-z0-9 .+_()\-]")
+
+
+# programs that start other games: a shortcut to one of them itself (named "Heroic", "Eden", "RetroArch", "Google Chrome")
+# says nothing about the game played inside - such a run is not uploaded under the program's name
+FRONTENDS = ("heroic", "lutris", "bottles", "eden", "yuzu", "suyu", "sudachi", "citron", "ryujinx", "rpcs3", "retroarch",
+             "dolphin", "dolphinemu", "pcsx2", "ppsspp", "cemu", "duckstation", "xemu", "xenia", "vita3k", "melonds", "azahar",
+             "lime3ds", "citra", "emulationstation", "esde", "pegasus", "srm", "steamrommanager", "chrome", "chromium",
+             "firefox", "brave", "edge", "minigalaxy", "itch", "legendary", "gamehub")
+
+
+def _plain(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def is_frontend_itself(name: str, launcher: Optional[str]) -> bool:
+    """A shortcut that opens a launcher / emulator / browser itself, not one game in it."""
+    if not launcher or "(" in launcher:                        # "Heroic (GOG)": Heroic's own "Add to Steam" for one game
+        return False
+    tool, title = _plain(launcher), _plain(name)
+    return tool in FRONTENDS and bool(title) and (tool in title or title in tool)
+
+
+def is_shortcut(app_id) -> bool:
+    return isinstance(app_id, int) and app_id >= SHORTCUT_MIN_ID
+
+
+def read_binary_vdf(data: bytes) -> dict:
+    """Steam's binary key-value format (shortcuts.vdf): 0x00 nested map, 0x01 text, 0x02 32-bit number, 0x08 end of a map.
+    Raises ValueError on anything it cannot read."""
+    def parse(i: int) -> tuple[dict, int]:
+        out: dict = {}
+        while True:
+            if i >= len(data):
+                raise ValueError("unexpected end")
+            kind = data[i]
+            i += 1
+            if kind == 0x08:
+                return out, i
+            end = data.index(b"\x00", i)
+            key = data[i:end].decode("utf-8", "replace")
+            i = end + 1
+            if kind == 0x00:
+                value, i = parse(i)
+            elif kind == 0x01:
+                end = data.index(b"\x00", i)
+                value, i = data[i:end].decode("utf-8", "replace"), end + 1
+            elif kind == 0x02:
+                if i + 4 > len(data):
+                    raise ValueError("unexpected end")
+                value, i = struct.unpack("<I", data[i:i + 4])[0], i + 4
+            else:
+                raise ValueError(f"unknown type {kind}")
+            out[key] = value
+    try:
+        return parse(0)[0]
+    except IndexError as exc:                                  # data.index found no end of a text
+        raise ValueError("unexpected end") from exc
+
+
+def _steam_roots(home: Path) -> list[Path]:
+    return [home / ".local/share/Steam", home / ".steam/steam", home / ".var/app/com.valvesoftware.Steam/.local/share/Steam"]
+
+
+def _field(entry: dict, name: str):
+    for key, value in entry.items():                           # Steam has written both "AppName" and "appname"
+        if key.lower() == name:
+            return value
+    return None
+
+
+def shortcut_launcher(entry: dict) -> Optional[str]:
+    """What starts a shortcut, as a short name: Heroic with its store, a Flatpak app's last name part, else the program's name."""
+    exe = str(_field(entry, "exe") or "")
+    options = str(_field(entry, "launchoptions") or "")
+    text = f"{exe} {options}"
+    heroic = _HEROIC_URL.search(text)
+    if heroic:
+        runner = (heroic.group(1) or heroic.group(2) or "").lower()
+        store = _HEROIC_STORES.get(runner)
+        return f"Heroic ({store})" if store else "Heroic"
+    try:
+        tokens = shlex.split(text)
+    except ValueError:
+        tokens = text.split()
+    name = ""
+    flatpak = str(_field(entry, "flatpakappid") or "")
+    if flatpak:
+        name = flatpak.rsplit(".", 1)[-1]
+    elif tokens and Path(tokens[0]).name == "flatpak" and "run" in tokens:
+        rest = [t for t in tokens[tokens.index("run") + 1:] if not t.startswith("-")]
+        if rest:
+            name = rest[0].rsplit(".", 1)[-1]
+    elif tokens:
+        name = _EXTENSIONS.sub("", Path(tokens[0]).name)
+    if "heroicgameslauncher" in text.lower() or name.lower() in ("heroic", "hgl"):
+        return "Heroic"
+    name = _NOT_PLAIN.sub("", name).strip()[:40]
+    return name or None
+
+
+def shortcuts(home: Optional[Path] = None) -> dict[int, dict]:
+    """Every shortcut of every Steam account on this machine: {app id: {"name", "launcher"}}. The most recently changed
+    list wins when two accounts have the same id (the id comes from the program and the name, so they mean the same game)."""
+    home = Path.home() if home is None else Path(home)
+    files: list[tuple[float, Path]] = []
+    for root in _steam_roots(home):
+        try:
+            for path in root.glob("userdata/*/config/shortcuts.vdf"):
+                try:
+                    files.append((path.stat().st_mtime, path))
+                except OSError:
+                    continue
+        except OSError:
+            continue
+    found: dict[int, dict] = {}
+    for _, path in sorted(files, reverse=True):
+        try:
+            data = read_binary_vdf(path.read_bytes())
+        except (OSError, ValueError):
+            continue
+        entries = _field(data, "shortcuts")
+        if not isinstance(entries, dict):
+            continue
+        for entry in entries.values():
+            if not isinstance(entry, dict):
+                continue
+            name = str(_field(entry, "appname") or "").strip()
+            if not name:
+                continue
+            app_id = _field(entry, "appid")
+            if not isinstance(app_id, int) or not app_id:      # very old lists: Steam derives the id
+                app_id = zlib.crc32((str(_field(entry, "exe") or "") + name).encode()) | 0x80000000
+            found.setdefault(app_id, {"name": name, "launcher": shortcut_launcher(entry)})
+    return found
+
+
+def shortcut(app_id: int, home: Optional[Path] = None) -> Optional[dict]:
+    return shortcuts(home).get(app_id) if is_shortcut(app_id) else None
 
 
 def newest_log(log_dir: Path, max_age: float = 60.0, now: Optional[float] = None) -> Optional[Path]:
@@ -141,7 +297,15 @@ def game_pid(app_id: int, proc: Path = Path("/proc")) -> Optional[int]:
 
 
 def describe(app_id: int) -> "GameInfo":
-    return GameInfo(app_id=app_id, name=game_name(app_id), pid=game_pid(app_id))
+    pid = game_pid(app_id)
+    return _info(app_id, pid)
+
+
+def _info(app_id: int, pid: Optional[int]) -> GameInfo:
+    if is_shortcut(app_id):
+        found = shortcut(app_id) or {}
+        return GameInfo(app_id=app_id, name=found.get("name") or UNKNOWN_SHORTCUT, pid=pid, launcher=found.get("launcher"))
+    return GameInfo(app_id=app_id, name=game_name(app_id), pid=pid)
 
 
 def running_steam_games(proc: Path = Path("/proc")) -> set[int]:
@@ -200,4 +364,4 @@ def identify(csv_path: Path, proc: Path = Path("/proc")) -> Optional[GameInfo]:
             app_id = next(iter(games))
     if not app_id:
         return None
-    return GameInfo(app_id=app_id, name=game_name(app_id), pid=pid)
+    return _info(app_id, pid)

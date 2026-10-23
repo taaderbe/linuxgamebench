@@ -1083,3 +1083,41 @@ def test_a_log_without_a_summary_keeps_recording(overlay):
     for second in range(21, 79):
         overlay.service.tick(T0 + second)
     assert overlay.service.session.phase.value == "recording"
+
+
+# ----- shortcuts (no Steam app: emulators, Heroic, own builds) -------------------------------------------------------------
+
+def test_a_shortcut_is_uploaded_as_non_steam_with_its_launcher(auto):
+    auto.game = GameInfo(2933456376, "Ride 2", pid=4242, launcher="RPCS3")
+    auto.running = {2933456376}
+    auto.chord(T0 + 20)
+    auto.service.tick(T0 + 81)
+    payload = auto.sent[0]
+    assert payload["steam_app_id"] == 0 and payload["non_steam"] is True and payload["game_name"] == "Ride 2"
+    assert payload["device_state"]["software"]["launcher"] == "RPCS3"
+
+
+def test_a_steam_game_sends_no_marker_and_no_launcher(auto):
+    auto.chord(T0 + 20)
+    auto.service.tick(T0 + 81)
+    payload = auto.sent[0]
+    assert "non_steam" not in payload and payload["steam_app_id"] == 1245620
+    assert "launcher" not in payload["device_state"]["software"]
+
+
+def test_a_shortcut_without_a_name_is_kept_not_uploaded(auto):
+    auto.game = GameInfo(3000000000, "Non-Steam game", pid=4242)
+    auto.running = {3000000000}
+    auto.chord(T0 + 20)
+    auto.service.tick(T0 + 81)
+    assert auto.sent == [] and auto.statuses() == ["failed"]
+    assert "shortcut list" in auto.said[-1]
+
+
+def test_a_shortcut_to_the_emulator_itself_is_kept_not_uploaded(auto):
+    auto.game = GameInfo(2665844199, "Eden", pid=4242, launcher="eden")
+    auto.running = {2665844199}
+    auto.chord(T0 + 20)
+    auto.service.tick(T0 + 81)
+    assert auto.sent == [] and auto.statuses() == ["failed"]
+    assert "starts other games" in auto.said[-1]

@@ -111,6 +111,7 @@ class BenchmarkAPIClient:
         game_settings: Optional[Dict[str, str]] = None,
         require_auth: bool = True,
         device_state: Optional[Dict[str, Any]] = None,
+        non_steam: bool = False,
     ) -> UploadResult:
         """
         Upload a benchmark result to the server.
@@ -178,6 +179,8 @@ class BenchmarkAPIClient:
         }
         if device_state:
             payload["device_state"] = device_state          # Steam Deck: power source, battery, TDP, display, versions
+        if non_steam:
+            payload["non_steam"] = True                      # a shortcut added to Steam: no app id, own game on the server
 
         try:
             with httpx.Client(timeout=self.timeout) as client:

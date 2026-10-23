@@ -88,6 +88,13 @@ def game_resolution(analyzer, device_state: Optional[dict]) -> str:
 def prepare(segment: Path, game: dict, deck: DeckInfo, system_info: Optional[dict] = None,
             device_state: Optional[dict] = None) -> tuple[Optional[Prepared], str]:
     """Analyse + validate a segment. Returns (Prepared, "") or (None, reason)."""
+    from linux_game_benchmark.deck.game import UNKNOWN_SHORTCUT, is_frontend_itself, is_shortcut
+    if is_shortcut(int(game["app_id"])):
+        if (game.get("name") or UNKNOWN_SHORTCUT) == UNKNOWN_SHORTCUT:
+            return None, "the non-Steam game's name was not found in Steam's shortcut list"
+        if is_frontend_itself(game["name"], game.get("launcher")):
+            return None, (f"'{game['name']}' starts other games - add the game itself to Steam "
+                          "(Heroic: 'Add to Steam', emulators: Steam ROM Manager) and record it from there")
     from linux_game_benchmark.analysis.metrics import FrametimeAnalyzer
     from linux_game_benchmark.benchmark.validation import validate_benchmark_for_upload
 
@@ -107,8 +114,9 @@ def prepare(segment: Path, game: dict, deck: DeckInfo, system_info: Optional[dic
     if system_info is None:
         from linux_game_benchmark.system.hardware_info import get_system_info
         system_info = get_system_info()
+    non_steam = is_shortcut(int(game["app_id"]))     # a shortcut's id (>= 2^31) is no Steam app: sent as 0 with the marker
     kwargs = {
-        "steam_app_id": int(game["app_id"]),
+        "steam_app_id": 0 if non_steam else int(game["app_id"]),
         "game_name": game["name"],
         "resolution": game_resolution(analyzer, device_state),
         "system_info": flatten_system(system_info, deck),
@@ -119,6 +127,8 @@ def prepare(segment: Path, game: dict, deck: DeckInfo, system_info: Optional[dic
         "game_settings": None,
         "device_state": device_state or None,
     }
+    if non_steam:
+        kwargs["non_steam"] = True
     return Prepared(kwargs, {
         "fps_avg": fps.get("average", 0), "seconds": fps.get("duration_seconds", 0),
         "frames": fps.get("frame_count", 0),

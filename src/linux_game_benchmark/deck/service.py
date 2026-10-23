@@ -429,6 +429,8 @@ class DeckService:
             software = self._read_software(active.game)
         except Exception:                        # the versions are a bonus on top of a bonus
             software = {}
+        if active.game is not None and active.game.launcher:   # a shortcut (emulator, Heroic, ...): what started it
+            software = {**software, "launcher": active.game.launcher}
         if active.shader_mb is not None:         # shaders built while playing stutter: how big the cache was, how much it grew
             software = {**software, "shader_cache_mb": active.shader_mb}
             end = self._shader_mb(active.game)
@@ -480,6 +482,7 @@ class DeckService:
             "created": segment.end, "seconds": round(cut.duration_seconds, 1), "frames": cut.frames,
             "app_id": active.game.app_id if active.game else None,
             "game_name": active.game.name if active.game else None,
+            "launcher": active.game.launcher if active.game else None,
             "status": "pending" if auto else "local",
             "device_state": self._device_state(active, now),
         }
@@ -548,12 +551,12 @@ class DeckService:
     def upload_item(self, item: deck_queue.Item, now: Optional[float] = None) -> bool:
         """Try to upload one queued recording. Returns True when it is online."""
         now = time.time() if now is None else now
-        app_id, name = item.meta.get("app_id"), item.meta.get("game_name")
+        app_id, name, launcher = item.meta.get("app_id"), item.meta.get("game_name"), item.meta.get("launcher")
         if not app_id:
             self.queue.failed_attempt(item, "the game could not be identified", retry=False, now=now)
             self._message("not uploaded: the game could not be identified (recording kept)", "error")
             return False
-        prepared, reason = self._prepare(item.segment, {"app_id": app_id, "name": name}, self.deck,
+        prepared, reason = self._prepare(item.segment, {"app_id": app_id, "name": name, "launcher": launcher}, self.deck,
                                          device_state=item.meta.get("device_state"))
         if prepared is None:
             self.queue.failed_attempt(item, reason, retry=False, now=now)
