@@ -110,6 +110,8 @@ class BenchmarkAPIClient:
         comment: Optional[str] = None,
         game_settings: Optional[Dict[str, str]] = None,
         require_auth: bool = True,
+        device_state: Optional[Dict[str, Any]] = None,
+        non_steam: bool = False,
     ) -> UploadResult:
         """
         Upload a benchmark result to the server.
@@ -154,6 +156,10 @@ class BenchmarkAPIClient:
                 "proton_build": system_info.get("proton_build"),
                 "proton_tool": system_info.get("proton_tool"),
                 "proton_build_ts": system_info.get("proton_build_ts"),
+                "device_class": system_info.get("device_class"),
+                "device_vendor": system_info.get("device_vendor"),
+                "device_product": system_info.get("device_product"),
+                "device_version": system_info.get("device_version"),
             },
             "metrics": {
                 "fps_avg": metrics.get("fps_avg") or metrics.get("average", 0),
@@ -171,6 +177,10 @@ class BenchmarkAPIClient:
             "comment": comment,
             "game_settings": game_settings,
         }
+        if device_state:
+            payload["device_state"] = device_state          # Steam Deck: power source, battery, TDP, display, versions
+        if non_steam:
+            payload["non_steam"] = True                      # a shortcut added to Steam: no app id, own game on the server
 
         try:
             with httpx.Client(timeout=self.timeout) as client:

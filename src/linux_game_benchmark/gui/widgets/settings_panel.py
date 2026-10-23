@@ -2,7 +2,7 @@
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QFrame,
-    QPushButton, QGridLayout, QSizePolicy, QSpinBox, QLineEdit,
+    QPushButton, QGridLayout, QSizePolicy, QSpinBox, QLineEdit, QCheckBox,
 )
 from PySide6.QtCore import Qt, Signal
 
@@ -78,6 +78,15 @@ class SettingsPanel(QWidget):
         # Hide GPU row by default, shown when multi-GPU detected
         self._gpu_label.setVisible(False)
         self._gpu_combo.setVisible(False)
+
+        # Hide the overlay: MangoHud keeps recording, nothing is drawn in the top-left corner
+        self._hide_overlay = QCheckBox("Hide the overlay (everything is still recorded)")
+        self._hide_overlay.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px; background: transparent;")
+        self._hide_overlay.setToolTip("MangoHud's numbers in the top-left corner stay invisible while the benchmark runs. "
+                                      "The recording is not affected - the same data is logged.")
+        self._hide_overlay.setChecked(Preferences().hide_overlay)
+        self._hide_overlay.toggled.connect(self._on_hide_overlay)
+        res_layout.addWidget(self._hide_overlay, 2, 0, 1, 4)
 
         res_frame.layout().addLayout(res_layout)
         layout.addWidget(res_frame)
@@ -266,6 +275,15 @@ class SettingsPanel(QWidget):
     def get_min_duration(self) -> int:
         """Return minimum benchmark duration in seconds."""
         return self._dur_spin.value()
+
+    def _on_hide_overlay(self, checked: bool) -> None:
+        from linux_game_benchmark.config.preferences import Preferences
+        Preferences().hide_overlay = checked          # remembered for the next start and for the CLI
+        self.settings_changed.emit()
+
+    def get_show_overlay(self) -> bool:
+        """False when the user wants the overlay invisible."""
+        return not self._hide_overlay.isChecked()
 
     def get_gpu_pci(self) -> str:
         """Return selected GPU PCI address, or empty string."""

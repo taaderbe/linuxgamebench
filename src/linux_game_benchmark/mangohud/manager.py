@@ -162,8 +162,9 @@ class MangoHudManager:
                 "background_alpha=0.5",
             ])
         else:
-            # Hide HUD completely
-            config_lines.append("no_display")
+            # Hidden but still logging: MangoHud 0.8 writes no log with no_display
+            from linux_game_benchmark.mangohud.config_manager import HIDDEN_OVERLAY_LINES
+            config_lines.extend(HIDDEN_OVERLAY_LINES)
 
         # Metrics to capture (for logging, not display)
         config_lines.extend([

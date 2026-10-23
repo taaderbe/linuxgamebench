@@ -1,0 +1,167 @@
+"""Cutting one recording out of a MangoHud log that runs for the whole session."""
+
+from datetime import datetime
+
+import pytest
+
+from linux_game_benchmark.analysis.metrics import FrametimeAnalyzer
+from linux_game_benchmark.deck.segments import cut_log, last_elapsed_ns, log_start_from_name
+
+HEADER = ("os,cpu,gpu,ram,kernel,driver,cpuscheduler\n"
+          "SteamOS,AMD Custom APU 0405,AMD Custom GPU 0405,15000000,6.5.0,Mesa 25.1,none\n"
+          "fps,frametime,cpu_load,gpu_load,elapsed\n")
+
+
+def make_log(tmp_path, seconds=120, fps=60, name="game.exe_2026-10-20_18-00-00.csv"):
+    """A log with `fps` rows per second, elapsed in ns, started 2026-10-20 18:00:00 local time."""
+    rows = []
+    step = 1_000_000_000 // fps
+    for i in range(seconds * fps):
+        rows.append(f"{fps},{1000 / fps:.3f},40.0,90.0,{i * step}\n")
+    path = tmp_path / name
+    path.write_text(HEADER + "".join(rows))
+    return path
+
+
+T0 = datetime(2026, 10, 20, 18, 0, 0).timestamp()
+
+
+def test_log_start_comes_from_the_file_name(tmp_path):
+    assert log_start_from_name("Elden Ring.exe_2026-10-20_18-00-00.csv") == T0
+    assert log_start_from_name("x_2026-10-20_18-00-00_summary.csv") is None     # summaries are not logs
+    assert log_start_from_name("nostamp.csv") is None
+
+
+def test_segment_has_the_rows_between_the_marks_and_is_rebased(tmp_path):
+    src = make_log(tmp_path)
+    cut = cut_log(src, T0 + 20, T0 + 80, tmp_path / "seg.csv")
+    assert cut.duration_seconds == pytest.approx(60, abs=0.1)
+    assert 3590 <= cut.frames <= 3610
+    lines = (tmp_path / "seg.csv").read_text().splitlines()
+    assert lines[:3] == HEADER.splitlines()
+    assert lines[3].endswith(",0")                                     # elapsed starts at 0
+    assert int(lines[-1].rsplit(",", 1)[1]) == pytest.approx(60e9, abs=2e7)
+
+
+def test_the_cut_file_is_read_by_the_normal_analyzer(tmp_path):
+    src = make_log(tmp_path)
+    cut_log(src, T0 + 10, T0 + 70, tmp_path / "seg.csv")
+    analyzer = FrametimeAnalyzer(tmp_path / "seg.csv")
+    metrics = analyzer.analyze()
+    assert metrics["fps"]["average"] == pytest.approx(60, abs=1)
+    assert metrics["fps"]["duration_seconds"] == pytest.approx(60, abs=1)
+    assert len(analyzer.frametimes) >= 3590
+
+
+def test_marks_outside_the_log_or_reversed_are_errors(tmp_path):
+    src = make_log(tmp_path, seconds=30)
+    with pytest.raises(ValueError, match="no frames"):
+        cut_log(src, T0 + 500, T0 + 560, tmp_path / "seg.csv")
+    with pytest.raises(ValueError, match="after the start"):
+        cut_log(src, T0 + 20, T0 + 10, tmp_path / "seg.csv")
+
+
+def test_explicit_log_start_replaces_the_file_name(tmp_path):
+    src = make_log(tmp_path, name="renamed.csv")
+    with pytest.raises(ValueError, match="cannot tell"):
+        cut_log(src, T0 + 1, T0 + 5, tmp_path / "a.csv")
+    assert cut_log(src, T0 + 1, T0 + 5, tmp_path / "a.csv", log_start=T0).frames > 200
+
+
+def test_a_log_without_elapsed_column_is_refused(tmp_path):
+    path = tmp_path / "g_2026-10-20_18-00-00.csv"
+    path.write_text("a,b\n1,2\nfps,frametime\n60,16.6\n")
+    with pytest.raises(ValueError, match="elapsed"):
+        cut_log(path, T0, T0 + 5, tmp_path / "s.csv")
+
+
+def test_last_elapsed_reads_only_complete_rows(tmp_path):
+    src = make_log(tmp_path, seconds=10)
+    assert last_elapsed_ns(src) == pytest.approx(10e9, abs=2e7)
+    with open(src, "a") as fh:
+        fh.write("60,16.6,40.0")                 # half-written row: no elapsed yet
+    assert last_elapsed_ns(src) == pytest.approx(10e9, abs=2e7)
+    assert last_elapsed_ns(tmp_path / "missing.csv") is None
+
+
+# ----- a log that was ended on command ------------------------------------------------------------------------------------
+
+def test_a_log_is_closed_when_its_summary_file_appears(tmp_path):
+    from linux_game_benchmark.deck.segments import wait_until_closed
+    path = make_log(tmp_path, seconds=2, name="mangoapp_2026-10-21_12-00-00.csv")
+    (tmp_path / "mangoapp_2026-10-21_12-00-00_summary.csv").write_text("fps\n")
+    assert wait_until_closed(path, timeout=1.0, poll=0.01) is True
+
+
+def test_a_log_that_stops_growing_counts_as_closed_without_a_summary(tmp_path):
+    from linux_game_benchmark.deck.segments import wait_until_closed
+    path = make_log(tmp_path, seconds=2, name="mangoapp_2026-10-21_12-00-00.csv")
+    assert wait_until_closed(path, timeout=1.0, poll=0.01) is True
+
+
+def test_a_log_that_keeps_growing_is_not_closed_and_a_missing_one_cannot_be(tmp_path):
+    from linux_game_benchmark.deck.segments import wait_until_closed
+    path = make_log(tmp_path, seconds=2, name="mangoapp_2026-10-21_12-00-00.csv")
+    import threading, time
+    stop = threading.Event()
+
+    def grow():
+        while not stop.is_set():
+            with open(path, "a") as fh:
+                fh.write("60,16.7,40.0,90.0,0\n")
+            time.sleep(0.005)
+    thread = threading.Thread(target=grow)
+    thread.start()
+    try:
+        assert wait_until_closed(path, timeout=0.3, poll=0.02) is False
+    finally:
+        stop.set()
+        thread.join()
+    assert wait_until_closed(tmp_path / "nowhere.csv", timeout=0.2, poll=0.01) is False
+
+
+# ----- holes: a paused or hung game leaves no rows ---------------------------------------------------------------------------
+
+def make_log_with_hole(tmp_path, hole_from, hole_to, seconds=120, fps=60, name="game.exe_2026-10-20_18-00-00.csv"):
+    """Like make_log, but without rows between hole_from and hole_to (seconds) - what MangoHud writes while a game draws nothing."""
+    step = 1_000_000_000 // fps
+    rows = [f"{fps},{1000 / fps:.3f},40.0,90.0,{i * step}\n" for i in range(seconds * fps)
+            if not hole_from <= i / fps < hole_to]
+    path = tmp_path / name
+    path.write_text(HEADER + "".join(rows))
+    return path
+
+
+def test_a_full_segment_has_no_hole(tmp_path):
+    cut = cut_log(make_log(tmp_path), T0 + 10, T0 + 70, tmp_path / "cut.csv")
+    assert cut.hole_seconds() is None
+    assert cut.longest_gap_seconds < 0.02 and cut.head_seconds < 0.02 and cut.tail_seconds < 0.02
+
+
+def test_frames_missing_in_the_middle_are_a_hole(tmp_path):
+    cut = cut_log(make_log_with_hole(tmp_path, 30, 42), T0 + 10, T0 + 70, tmp_path / "cut.csv")
+    assert cut.hole_seconds() == pytest.approx(12.0, abs=0.05)
+
+
+def test_frames_that_stop_before_the_end_mark_are_a_hole(tmp_path):
+    """Vampire Survivors on the Deck: after Steam's menu the log had no rows any more (4.5 s of 60 s)."""
+    cut = cut_log(make_log(tmp_path, seconds=15), T0 + 10, T0 + 70, tmp_path / "cut.csv")
+    assert cut.tail_seconds == pytest.approx(55.0, abs=0.05) and cut.hole_seconds() == pytest.approx(55.0, abs=0.05)
+
+
+def test_frames_that_start_late_are_a_hole(tmp_path):
+    cut = cut_log(make_log_with_hole(tmp_path, 0, 20), T0 + 10, T0 + 70, tmp_path / "cut.csv")
+    assert cut.head_seconds == pytest.approx(10.0, abs=0.05) and cut.hole_seconds() is not None
+
+
+@pytest.mark.parametrize("hole, flagged", [(1.9, False), (2.1, True)])
+def test_the_limit_inside_is_two_seconds(tmp_path, hole, flagged):
+    cut = cut_log(make_log_with_hole(tmp_path, 30, 30 + hole), T0 + 10, T0 + 70, tmp_path / "cut.csv")
+    assert (cut.hole_seconds() is not None) is flagged, cut
+
+
+@pytest.mark.parametrize("late, flagged", [(2.5, False), (3.5, True)])
+def test_the_edges_get_one_second_more(tmp_path, late, flagged):
+    """The first frame comes a moment after the command, and in Desktop Mode the start time comes from whole seconds."""
+    cut = cut_log(make_log_with_hole(tmp_path, 10, 10 + late), T0 + 10, T0 + 70, tmp_path / "cut.csv")
+    assert (cut.hole_seconds() is not None) is flagged, cut

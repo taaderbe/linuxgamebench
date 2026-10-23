@@ -13,6 +13,7 @@ from linux_game_benchmark.config.settings import settings
 @pytest.fixture
 def config_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(type(settings), "AUTH_FILE", tmp_path / "auth.json")       # never the real login of whoever runs the tests
     return tmp_path
 
 

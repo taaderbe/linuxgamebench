@@ -12,4 +12,13 @@ if [ ! -e /etc/ssl/certs/ca-certificates.crt ] && [ ! -e /etc/pki/tls/certs/ca-b
         export REQUESTS_CA_BUNDLE="$CERTIFI_PEM"
     fi
 fi
-exec "$HERE/usr/bin/python3" -c 'import sys; from linux_game_benchmark.gui import launch; launch()' "$@"
+# No argument (or only Qt flags like -platform) starts the GUI; a command word runs the CLI from the same bundle:
+#   ./LinuxGameBench-x86_64.AppImage deck setup     (Steam Deck: no pipx, no Python packages needed)
+case "${1:-}" in
+    ""|-*)
+        exec "$HERE/usr/bin/python3" -c 'import sys; from linux_game_benchmark.gui import launch; launch()' "$@"
+        ;;
+    *)
+        exec "$HERE/usr/bin/python3" -c 'import sys; from linux_game_benchmark.cli import app; app(prog_name="LinuxGameBench")' "$@"
+        ;;
+esac

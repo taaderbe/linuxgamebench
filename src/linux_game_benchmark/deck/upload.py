@@ -1,0 +1,158 @@
+"""From a cut segment to an upload: analyse, validate, build the payload, send, classify the result."""
+
+from __future__ import annotations
+
+import base64
+import gzip
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+from linux_game_benchmark.deck.detect import DeckInfo
+
+DECK_NATIVE_RESOLUTION = "1280x800"
+_RETRY_HINTS = ("rate limit", "unreachable", "timed out", "unexpected error", "authentication", "connection")
+
+
+@dataclass
+class Prepared:
+    kwargs: dict
+    summary: dict            # fps_avg, seconds, frames - for the log line / sound decision
+
+
+def deck_hardware_names(deck: DeckInfo, system_info: Optional[dict] = None) -> tuple[str, str]:
+    """The Deck is one piece of hardware: name it as such instead of 'AMD Custom GPU 0405'.
+
+    Another handheld has no such fixed name here (the server names the models it knows): it sends what the system reports."""
+    if deck.handheld:
+        info = system_info or {}
+        return (str(info.get("gpu", {}).get("model") or deck.handheld_label), str(info.get("cpu", {}).get("model") or deck.handheld_label))
+    return (f"Steam Deck {deck.model}".strip(), "Steam Deck APU")
+
+
+def flatten_system(system_info: dict, deck: DeckInfo, proton: Optional[dict] = None) -> dict:
+    from linux_game_benchmark.utils.formatting import short_kernel, short_os
+    gpu, cpu = deck_hardware_names(deck, system_info)
+    gpu_info = system_info.get("gpu", {})
+    os_info = system_info.get("os", {})
+    flat = {
+        "gpu": gpu,
+        "cpu": cpu,
+        "os": short_os(os_info.get("name", "SteamOS")),
+        "kernel": short_kernel(os_info.get("kernel", "")),
+        "gpu_driver": gpu_info.get("driver_version"),
+        "vulkan": gpu_info.get("vulkan_version"),
+        "ram_gb": int(system_info.get("ram", {}).get("total_gb", 0)),
+        "scheduler": system_info.get("scheduler"),
+        "gpu_device_id": gpu_info.get("device_id"),
+        "gpu_lspci_raw": gpu_info.get("lspci_raw"),
+        "device_class": deck.device_class,
+        "device_vendor": deck.vendor or None,
+        "device_product": deck.product or None,
+        "device_version": deck.version or None,
+    }
+    if proton:
+        flat.update(proton)
+    return flat
+
+
+def proton_of(device_state: Optional[dict]) -> Optional[dict]:
+    """The run's Proton fields from what the recorder found out about the launch (device_state.software); the tables, filters
+    and share cards on the site read these fields, not device_state (PROD run 1059 had none, 2026-10-23)."""
+    software = (device_state or {}).get("software") or {}
+    if software.get("compat") != "proton" or not software.get("proton_build"):
+        return None
+    return {"proton_build": software["proton_build"], "proton_tool": software.get("proton")}
+
+
+def flatten_metrics(metrics: dict) -> dict:
+    fps = metrics.get("fps", {})
+    return {
+        "fps_avg": fps.get("average", 0),
+        "fps_min": fps.get("minimum", 0),
+        "fps_1low": fps.get("1_percent_low", 0),
+        "fps_01low": fps.get("0.1_percent_low", 0),
+        "stutter_rating": metrics.get("stutter", {}).get("stutter_rating"),
+        "consistency_rating": metrics.get("frame_pacing", {}).get("consistency_rating"),
+        "duration_seconds": fps.get("duration_seconds", 0),
+        "frame_count": fps.get("frame_count", 0),
+    }
+
+
+def compress_log(path: Path) -> Optional[str]:
+    try:
+        return base64.b64encode(gzip.compress(path.read_bytes())).decode("ascii")
+    except OSError:
+        return None
+
+
+def game_resolution(analyzer, device_state: Optional[dict]) -> str:
+    """The resolution the game rendered at, as measured on the screen server (Gamescope); else what the log says (MangoHud
+    writes no such column today); else the panel's own mode; the Deck's native mode as the last resort."""
+    display = (device_state or {}).get("display") or {}
+    return (display.get("render_mode") or getattr(analyzer, "resolution", None)
+            or display.get("internal_mode") or DECK_NATIVE_RESOLUTION)
+
+
+def prepare(segment: Path, game: dict, deck: DeckInfo, system_info: Optional[dict] = None,
+            device_state: Optional[dict] = None) -> tuple[Optional[Prepared], str]:
+    """Analyse + validate a segment. Returns (Prepared, "") or (None, reason)."""
+    from linux_game_benchmark.deck.game import UNKNOWN_SHORTCUT, is_frontend_itself, is_shortcut
+    if is_shortcut(int(game["app_id"])):
+        if (game.get("name") or UNKNOWN_SHORTCUT) == UNKNOWN_SHORTCUT:
+            return None, "the non-Steam game's name was not found in Steam's shortcut list"
+        if is_frontend_itself(game["name"], game.get("launcher")):
+            return None, (f"'{game['name']}' starts other games - add the game itself to Steam "
+                          "(Heroic: 'Add to Steam', emulators: Steam ROM Manager) and record it from there")
+    from linux_game_benchmark.analysis.metrics import FrametimeAnalyzer
+    from linux_game_benchmark.benchmark.validation import validate_benchmark_for_upload
+
+    try:
+        analyzer = FrametimeAnalyzer(segment)
+        metrics = analyzer.analyze()
+    except Exception as exc:                        # a broken CSV must not stop the service
+        return None, f"cannot analyse the recording: {exc}"
+    frametimes = list(getattr(analyzer, "frametimes", []))
+    fps = metrics.get("fps", {})
+    validation = validate_benchmark_for_upload(
+        frametimes, {"average": fps.get("average"), "minimum": fps.get("minimum"), "maximum": fps.get("maximum")})
+    errors = [issue.message for issue in validation.errors]
+    if errors:
+        return None, "; ".join(errors)
+
+    if system_info is None:
+        from linux_game_benchmark.system.hardware_info import get_system_info
+        system_info = get_system_info()
+    non_steam = is_shortcut(int(game["app_id"]))     # a shortcut's id (>= 2^31) is no Steam app: sent as 0 with the marker
+    kwargs = {
+        "steam_app_id": 0 if non_steam else int(game["app_id"]),
+        "game_name": game["name"],
+        "resolution": game_resolution(analyzer, device_state),
+        "system_info": flatten_system(system_info, deck, proton_of(device_state)),
+        "metrics": flatten_metrics(metrics),
+        "frametimes": frametimes or None,
+        "mangohud_log_compressed": compress_log(segment),
+        "comment": None,
+        "game_settings": None,
+        "device_state": device_state or None,
+    }
+    if non_steam:
+        kwargs["non_steam"] = True
+    return Prepared(kwargs, {
+        "fps_avg": fps.get("average", 0), "seconds": fps.get("duration_seconds", 0),
+        "frames": fps.get("frame_count", 0),
+    }), ""
+
+
+def is_retryable(error: str) -> bool:
+    text = (error or "").lower()
+    return any(hint in text for hint in _RETRY_HINTS)
+
+
+def send(kwargs: dict) -> tuple[bool, str, str]:
+    """Upload (anonymous when nobody is paired). Returns (ok, url_or_error, extras_text)."""
+    from linux_game_benchmark.api.client import BenchmarkAPIClient
+    result = BenchmarkAPIClient().upload_benchmark(**kwargs, require_auth=False)
+    if result.success:
+        return True, result.url or "", ""
+    return False, result.error or "upload failed", ""

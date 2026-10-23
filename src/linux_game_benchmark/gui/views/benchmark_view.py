@@ -404,7 +404,7 @@ class BenchmarkView(QWidget):
 
         self._setup_worker = MangoHudSetupWorker(
             app_id, output_dir, gpu_pci,
-            log_duration=actual_log_duration, parent=self,
+            log_duration=actual_log_duration, show_hud=self._settings_panel.get_show_overlay(), parent=self,
         )
         self._setup_worker.finished.connect(self._on_setup_done)
         self._setup_worker.start()

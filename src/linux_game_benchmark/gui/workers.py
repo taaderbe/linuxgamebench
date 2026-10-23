@@ -141,12 +141,13 @@ class MangoHudSetupWorker(QThread):
     finished = Signal(bool, str, str)  # (success, error_msg, log_dir)
 
     def __init__(self, app_id: int, output_dir: Path, gpu_pci: str = "",
-                 log_duration: int = 0, parent=None):
+                 log_duration: int = 0, show_hud: bool = True, parent=None):
         super().__init__(parent)
         self._app_id = app_id
         self._output_dir = output_dir
         self._gpu_pci = gpu_pci
         self._log_duration = log_duration
+        self._show_hud = show_hud
 
     def run(self):
         try:
@@ -161,7 +162,7 @@ class MangoHudSetupWorker(QThread):
 
             mgr.set_benchmark_config(
                 output_folder=log_dir,
-                show_hud=True,
+                show_hud=self._show_hud,
                 log_interval=0,
                 manual_logging=True,
                 log_duration=self._log_duration,
