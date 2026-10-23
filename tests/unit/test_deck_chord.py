@@ -158,3 +158,87 @@ def test_the_setup_ends_with_the_buttons_as_the_deck_prints_them():
     assert "hold L1 + R1, then press VIEW (the small button left of the screen with two overlapping squares)" in text
     assert "LB" not in text and "RB" not in text
     assert "records 60 s, stops by itself and uploads" in text
+
+
+# ----- the Deck's own controller (hidraw): the chord works whatever layout a game uses ---------------------------------------
+# Dyson Sphere Program's community layout makes L1 = Shift, R1 = middle mouse, VIEW = Caps Lock: nothing reached the virtual
+# gamepad, the chord was never seen (Thomas, 2026-10-23).
+
+def deck_report(*bits, kind=0x09):
+    """A 64-byte state report of the Deck's controller with the given (byte, bit) set."""
+    data = bytearray(64)
+    data[0], data[2], data[3] = 0x01, kind, 0x40
+    for byte, bit in bits:
+        data[byte] |= 1 << bit
+    return bytes(data)
+
+
+L1_BIT, R1_BIT, VIEW_BIT, A_BIT = (8, 3), (8, 2), (9, 4), (8, 7)
+
+
+def test_the_deck_state_report_gives_the_physical_buttons():
+    from linux_game_benchmark.deck.chord import deck_buttons
+    assert deck_buttons(deck_report()) == frozenset()
+    assert deck_buttons(deck_report(L1_BIT, R1_BIT, VIEW_BIT)) == {LB, RB, VIEW}
+    assert deck_buttons(deck_report(A_BIT, (9, 6), (13, 1), (10, 0))) == {A, BUTTONS["MENU"], BUTTONS["L4"], BUTTONS["R5"]}
+    assert deck_buttons(deck_report((8, 0), (8, 1), (9, 5))) == frozenset(), "triggers and the Steam button are no chord buttons"
+    assert deck_buttons(deck_report(L1_BIT, kind=0x01)) is None, "other reports are not button states"
+    assert deck_buttons(b"\x01\x00\x09") is None
+
+
+def fake_hidraw(tmp_path, ids):
+    """sysfs with hidraw devices of the given HID_IDs; returns (sys_root, dev_root)."""
+    sys_root, dev_root = tmp_path / "sys", tmp_path / "dev"
+    dev_root.mkdir()
+    for i, hid_id in enumerate(ids):
+        (sys_root / f"hidraw{i}" / "device").mkdir(parents=True)
+        (sys_root / f"hidraw{i}" / "device" / "uevent").write_text(f"DRIVER=hid-steam\nHID_ID={hid_id}\nHID_NAME=x\n")
+    return sys_root, dev_root
+
+
+def test_only_the_decks_controller_is_read_from_hidraw(tmp_path):
+    from linux_game_benchmark.deck.chord import find_deck_hidraw
+    sys_root, dev_root = fake_hidraw(tmp_path, ["0003:000028DE:00001205", "0018:00002808:00001015", "0003:000028de:00001205"])
+    assert find_deck_hidraw(str(sys_root), str(dev_root)) == [f"{dev_root}/hidraw0", f"{dev_root}/hidraw2"]
+    assert find_deck_hidraw(str(tmp_path / "missing")) == []
+
+
+def test_the_chord_on_the_physical_buttons_triggers_without_any_virtual_gamepad(tmp_path):
+    import os
+    from linux_game_benchmark.deck.chord import GamepadReader
+    sys_root, dev_root = fake_hidraw(tmp_path, ["0003:000028DE:00001205"])
+    pipe = dev_root / "hidraw0"
+    os.mkfifo(pipe)
+    devices = tmp_path / "devices"
+    devices.write_text("")                                  # a keyboard / mouse layout: no gamepad at all
+    reader = GamepadReader(str(devices), str(sys_root), str(dev_root))
+    try:
+        assert reader.rescan() == [str(pipe)]
+        writer = os.open(pipe, os.O_WRONLY)
+        try:
+            for _ in range(5):
+                os.write(writer, deck_report())             # ~250 a second, nothing pressed
+            assert reader.read(0.2) == [], "unchanged reports are no events (and the wait lasts the timeout)"
+            tracker = ChordTracker(parse_chord(DEFAULT_CHORD))
+            os.write(writer, deck_report(L1_BIT))
+            os.write(writer, deck_report(L1_BIT, R1_BIT))
+            os.write(writer, deck_report(L1_BIT, R1_BIT))
+            os.write(writer, deck_report(L1_BIT, R1_BIT, VIEW_BIT))
+            events = reader.read(1.0)
+            assert events == [(LB, 1), (RB, 1), (VIEW, 1)]
+            assert [tracker.feed(code, value, 10.0) for code, value in events] == [False, False, True]
+            os.write(writer, deck_report())
+            assert reader.read(1.0) == [(LB, 0), (RB, 0), (VIEW, 0)]
+        finally:
+            os.close(writer)
+    finally:
+        reader.close()
+
+
+def test_the_same_press_from_the_virtual_pad_and_the_controller_triggers_once():
+    tracker = ChordTracker(parse_chord(DEFAULT_CHORD))
+    feed = [(LB, 1), (LB, 1), (RB, 1), (RB, 1), (VIEW, 1), (VIEW, 1), (VIEW, 0), (VIEW, 0)]   # each from both sources
+    assert sum(tracker.feed(code, value, 5.0) for code, value in feed) == 1
+    learner = ChordLearner()
+    found = [learner.feed(code, value) for code, value in feed]
+    assert [f for f in found if f] == [Chord(hold=(LB, RB), press=VIEW)]
