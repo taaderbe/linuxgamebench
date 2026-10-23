@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import re
 import struct
+import threading
 import time
 from pathlib import Path
 from typing import Callable, Optional
@@ -286,6 +287,74 @@ def read_sensors(root: Path) -> dict:
             out[key] = metrics[key]
     out["fan_rpm"] = _fan_rpm(root)
     return {k: v for k, v in out.items() if v is not None}
+
+
+class GpuBusy:
+    """GPU load and clock as the mean of quick readings (10 a second) since the previous take().
+
+    gpu_busy_percent is a momentary 0 / 100 reading, and the "average" in gpu_metrics only covers the time since anyone
+    last read the table - Steam's overlay program reads it too, so a reading right after it covers a few milliseconds
+    (seen on the real Deck: 65 % one second, 0 or 100 % the next). Our own quick readings do not depend on anyone else."""
+
+    IDLE_STOP = 10.0                    # nobody took a reading for this long (a recording dropped without finish): the thread ends
+
+    def __init__(self, root: str | Path = "/", interval: float = 0.1, clock: Callable[[], float] = time.monotonic):
+        self.root = Path(root)
+        self.interval = interval
+        self.clock = clock
+        self.last_take = clock()
+        self.lock = threading.Lock()
+        self.stop_event = threading.Event()
+        self.thread: Optional[threading.Thread] = None
+        self.loads: list[float] = []
+        self.clocks: list[float] = []
+        gpu, hw = _gpu_device(self.root), _hwmon(self.root, "amdgpu")
+        self.busy_file = gpu / "gpu_busy_percent" if gpu is not None else None
+        self.clock_file = hw / "freq1_input" if hw is not None else None
+
+    def poll(self) -> None:
+        """One quick reading (the thread calls this; tests call it directly)."""
+        load = _number(self.busy_file) if self.busy_file else None
+        clock = _number(self.clock_file) if self.clock_file else None
+        with self.lock:
+            if load is not None:
+                self.loads.append(load)
+            if clock is not None:
+                self.clocks.append(clock / 1e6)
+
+    def take(self) -> dict:
+        with self.lock:
+            loads, clocks, self.loads, self.clocks = self.loads, self.clocks, [], []
+            self.last_take = self.clock()
+        out: dict = {}
+        if len(loads) >= 3:                                    # too few readings say no more than the momentary one
+            out["gpu_load_pct"] = _round(sum(loads) / len(loads), 1)
+            out["gpu_load_source"] = "sampled"
+        if len(clocks) >= 3:
+            out["gpu_clock_mhz"] = round(sum(clocks) / len(clocks))
+        return out
+
+    def _run(self) -> None:
+        while not self.stop_event.wait(self.interval):
+            if self.clock() - self.last_take > self.IDLE_STOP:
+                break
+            try:
+                self.poll()
+            except Exception:                                  # a sensor that goes away ends nothing
+                pass
+
+    def start(self) -> None:
+        if self.busy_file is None or self.thread is not None:
+            return
+        self.last_take = self.clock()
+        self.thread = threading.Thread(target=self._run, name="lgb-gpu-busy", daemon=True)
+        self.thread.start()
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        if self.thread is not None:
+            self.thread.join(timeout=1.0)
+            self.thread = None
 
 
 def read_memory(root: Path) -> dict:
@@ -741,13 +810,14 @@ class Sampler:
 
     def __init__(self, root: str | Path = "/", environ: Optional[dict] = None,
                  reader: Optional[Callable[[], dict]] = None, interval: float = SAMPLE_INTERVAL,
-                 sensor_reader: Optional[Callable[[], dict]] = None, sensor_interval: float = SENSOR_INTERVAL):
+                 sensor_reader: Optional[Callable[[], dict]] = None, sensor_interval: float = SENSOR_INTERVAL, gpu_busy: bool = True):
         self.root = Path(root)
         self.reader = reader or (lambda: snapshot(self.root))
         self.cpu = CpuLoad(self.root)
         self.io = IoLoad(self.root)
+        self.gpu: Optional[GpuBusy] = GpuBusy(self.root) if sensor_reader is None and gpu_busy else None
         self.sensor_reader = sensor_reader or (lambda: {**read_sensors(self.root), **read_memory(self.root), **read_battery_now(self.root),
-                                                        **self.cpu.read(), **self.io.read()})
+                                                        **self.cpu.read(), **self.io.read(), **(self.gpu.take() if self.gpu else {})})
         self.interval = interval
         self.sensor_interval = sensor_interval
         self.environ = environ
@@ -760,6 +830,8 @@ class Sampler:
 
     def start(self, now: float) -> None:
         self.started = now
+        if self.gpu is not None:
+            self.gpu.start()
         self.first = self.reader()
         self.samples = [(now, self.first)]
         self.last_at = now
@@ -787,6 +859,8 @@ class Sampler:
         last = self.reader()
         self.samples.append((now, last))
         self._sense(now)
+        if self.gpu is not None:
+            self.gpu.stop()
         return self.summary(game_env, last)
 
     # -- condensing --
@@ -822,7 +896,8 @@ class Sampler:
         if read_mb:
             out["disk_read_total_mb"] = _round(sum(read_mb), 1)
         if values_of("gpu_load_pct"):
-            out["gpu_load_source"] = "metrics" if any(r.get("gpu_load_source") == "metrics" for _, r in self.sensor_samples) else "busy"
+            sources = {r.get("gpu_load_source") for _, r in self.sensor_samples}
+            out["gpu_load_source"] = "sampled" if "sampled" in sources else "metrics" if "metrics" in sources else "busy"
         cores = [r["cpu_cores_pct"] for _, r in self.sensor_samples if isinstance(r.get("cpu_cores_pct"), list) and r["cpu_cores_pct"]]
         width = len(cores[-1]) if cores else 0
         cores = [c for c in cores if len(c) == width][:] if 0 < width <= MAX_CORES else []

@@ -2,6 +2,7 @@
 
 import json
 import struct
+import time
 from pathlib import Path
 
 import pytest
@@ -306,7 +307,7 @@ def test_a_sensor_reader_that_fails_never_costs_the_recording(tmp_path):
 
 def test_the_real_reader_and_the_sampler_work_together_on_a_fake_deck(tmp_path):
     add_sensors(build_deck(tmp_path))
-    sampler = telemetry.Sampler(tmp_path)
+    sampler = telemetry.Sampler(tmp_path, gpu_busy=False)                 # the momentary readings (the 10-a-second ones: below)
     sampler.start(0.0)
     sampler.sample(1.0)
     put(tmp_path, "sys/class/drm/card0/device/gpu_busy_percent", 99)
@@ -709,10 +710,71 @@ def test_the_real_readers_work_together_on_a_fake_deck_with_everything(tmp_path)
     (tmp_path / "sys/class/drm/card0/device/gpu_metrics").write_bytes(metrics_table())
     put(tmp_path, "proc/meminfo", "MemTotal: 15700000 kB\nMemAvailable: 9408576 kB\n")
     io_files(tmp_path, 0, 0, 1000)
-    sampler = telemetry.Sampler(tmp_path)
+    sampler = telemetry.Sampler(tmp_path, gpu_busy=False)
     sampler.start(0.0)
     sampler.sample(1.0)
     sampler.sample(2.0)
     sensors = sampler.finish(3.0)["sensors"]
     assert sensors["gpu_load_source"] == "metrics" and sensors["gpu_load_avg_pct"] == 63.0 and sensors["cpu_power_avg_w"] == pytest.approx(2.15, abs=0.06)
     assert sensors["ram_used_avg_gb"] == 6.0 and sensors["series"]["battery_power_w"][0] == 12.5 and sensors["throttle_power_pct"] == 0
+
+
+
+# ----- GPU load from quick readings (gpu_metrics' average only covers the time since anyone last read it) -------------------
+
+def test_quick_readings_give_the_mean_load_and_clock_since_the_last_take(tmp_path):
+    add_sensors(build_deck(tmp_path))
+    gpu = telemetry.GpuBusy(tmp_path)
+    for busy, hz in ((100, 1_040_000_000), (0, 200_000_000), (100, 1_040_000_000), (60, 800_000_000)):
+        put(tmp_path, "sys/class/drm/card0/device/gpu_busy_percent", busy)
+        put(tmp_path, "sys/class/hwmon/hwmon3/freq1_input", hz)
+        gpu.poll()
+    assert gpu.take() == {"gpu_load_pct": 65.0, "gpu_load_source": "sampled", "gpu_clock_mhz": 770}
+    assert gpu.take() == {}, "taken readings are gone"
+
+
+def test_too_few_quick_readings_say_nothing(tmp_path):
+    add_sensors(build_deck(tmp_path))
+    gpu = telemetry.GpuBusy(tmp_path)
+    gpu.poll()
+    gpu.poll()
+    assert gpu.take() == {}
+
+
+def test_no_gpu_means_no_thread(tmp_path):
+    put(tmp_path, "etc/os-release", 'NAME="SteamOS"\n')
+    gpu = telemetry.GpuBusy(tmp_path)
+    gpu.start()
+    assert gpu.thread is None and gpu.take() == {}
+
+
+def test_the_sampler_runs_the_quick_readings_while_recording_and_stops_them(tmp_path):
+    add_sensors(build_deck(tmp_path))
+    sampler = telemetry.Sampler(tmp_path)
+    sampler.gpu.interval = 0.01
+    sampler.start(0.0)
+    assert sampler.gpu.thread is not None and sampler.gpu.thread.is_alive()
+    deadline = time.monotonic() + 2
+    while len(sampler.gpu.loads) < 5 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    sampler.sample(1.0)
+    thread = sampler.gpu.thread
+    sensors = sampler.finish(2.0)["sensors"]
+    assert sensors["gpu_load_source"] == "sampled" and sensors["gpu_load_avg_pct"] == 87.0
+    assert sampler.gpu.thread is None and not thread.is_alive(), "finish stops the thread"
+
+
+def test_a_dropped_recording_ends_its_thread_by_itself(tmp_path):
+    add_sensors(build_deck(tmp_path))
+    now = [100.0]
+    gpu = telemetry.GpuBusy(tmp_path, interval=0.01, clock=lambda: now[0])
+    gpu.start()
+    thread = gpu.thread
+    now[0] += telemetry.GpuBusy.IDLE_STOP + 1                              # nobody took a reading for longer than the limit
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+
+
+def test_sampled_wins_over_the_table_and_the_table_over_momentary():
+    assert recording([{"gpu_load_pct": 60.0, "gpu_load_source": "metrics"}, {"gpu_load_pct": 62.0, "gpu_load_source": "sampled"}] * 3)["sensors"]["gpu_load_source"] == "sampled"
+    assert recording([{"gpu_load_pct": 60.0, "gpu_load_source": "metrics"}, {"gpu_load_pct": 100.0}] * 3)["sensors"]["gpu_load_source"] == "metrics"
