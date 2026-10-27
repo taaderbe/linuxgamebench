@@ -2,6 +2,19 @@
 
 All notable changes to Linux Game Bench will be documented here.
 
+## 2026-10-27
+
+### Fixed
+- Runs recorded with the Steam Deck recorder on a desktop PC are now listed as that PC (named from the MangoHud log) instead of as a Steam Deck
+- Profile pages without benchmarks no longer stop with a script error
+- Logging in with two open tabs no longer logs one of them out
+
+### Added
+- Valve's Steam Machine is recognised and listed with the PCs
+
+### Changed
+- Faster homepage and faster responses under load
+
 ## 2026-10-23
 
 ### Added
